@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Passbook</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --paper: #eef1ef;
+    --paper-raised: #ffffff;
+    --paper-sunken: #e3e8e4;
+    --ink: #16202a;
+    --ink-soft: #55636d;
+    --ink-faint: #8b98a1;
+    --line: #d7ddd8;
+    --brass: #a8763a;
+    --brass-deep: #8a6027;
+    --brass-tint: #f1e4cc;
+    --positive: #2f7a63;
+    --positive-tint: #e1efe9;
+    --negative: #b14b36;
+    --negative-tint: #f5e4df;
+    --cat-1: #8a6d3b;
+    --cat-2: #3e7c5d;
+    --cat-3: #3b6e8c;
+    --cat-4: #b14b36;
+    --cat-5: #6b5b95;
+    --cat-6: #a8763a;
+    --cat-7: #357b74;
+    --cat-8: #a85c8a;
+    --cat-9: #6b7280;
+    --cat-10: #4a5b8c;
+    --cat-11: #6f7f2e;
+    --radius: 10px;
+    --radius-sm: 7px;
+    --shadow: 0 1px 2px rgba(22, 32, 42, 0.07), 0 6px 18px rgba(22, 32, 42, 0.06);
+    --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+    --font-body: "Work Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #12181d;
+      --paper-raised: #1b2329;
+      --paper-sunken: #0f1418;
+      --ink: #e9edee;
+      --ink-soft: #a2afb5;
+      --ink-faint: #6f7b81;
+      --line: #2b353b;
+      --brass: #d6a24f;
+      --brass-deep: #f0be73;
+      --brass-tint: #3a2e17;
+      --positive: #4fae8f;
+      --positive-tint: #17332a;
+      --negative: #e17557;
+      --negative-tint: #3a2019;
+      --cat-1: #c79a5e;
+      --cat-2: #5fae86;
+      --cat-3: #6c9bc0;
+      --cat-4: #e17557;
+      --cat-5: #9c8ac7;
+      --cat-6: #d6a24f;
+      --cat-7: #78bdb6;
+      --cat-8: #d08cb8;
+      --cat-9: #9aa3ac;
+      --cat-10: #8fa3d9;
+      --cat-11: #b3c96a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 6px 20px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #12181d;
+    --paper-raised: #1b2329;
+    --paper-sunken: #0f1418;
+    --ink: #e9edee;
+    --ink-soft: #a2afb5;
+    --ink-faint: #6f7b81;
+    --line: #2b353b;
+    --brass: #d6a24f;
+    --brass-deep: #f0be73;
+    --brass-tint: #3a2e17;
+    --positive: #4fae8f;
+    --positive-tint: #17332a;
+    --negative: #e17557;
+    --negative-tint: #3a2019;
+    --cat-1: #c79a5e;
+    --cat-2: #5fae86;
+    --cat-3: #6c9bc0;
+    --cat-4: #e17557;
+    --cat-5: #9c8ac7;
+    --cat-6: #d6a24f;
+    --cat-7: #78bdb6;
+    --cat-8: #d08cb8;
+    --cat-9: #9aa3ac;
+    --cat-10: #8fa3d9;
+    --cat-11: #b3c96a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  body {
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; }
+
+  button, input, select { font-family: inherit; font-size: inherit; color: inherit; }
+
+  a { color: var(--brass-deep); }
+
+  :focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+
+  .app {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 20px 16px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  /* header */
+  .topbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-bottom: 4px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { font-size: 1.7rem; letter-spacing: -0.01em; }
+  .tagline { margin: 2px 0 0; color: var(--ink-soft); font-size: 0.85rem; }
+
+  .month-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 6px;
+    box-shadow: var(--shadow);
+  }
+  .month-nav button {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .month-nav button:hover { background: var(--paper-sunken); color: var(--ink); }
+  #month-label {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+    min-width: 13em;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  /* sync banner */
+  .sync-banner {
+    border: 1px solid var(--line);
+    background: var(--brass-tint);
+    color: var(--ink);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sync-banner[hidden] { display: none; }
+
+  /* card balance reminder */
+  .card-reminder-banner { display: flex; flex-direction: column; gap: 10px; }
+  .card-reminder-banner[hidden] { display: none; }
+  .card-reminder-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    background: var(--brass-tint);
+    border: 1px solid var(--brass);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+  }
+  .card-reminder-text { flex: 1 1 220px; font-size: 0.85rem; line-height: 1.4; }
+  .card-reminder-row .amount-input { width: 130px; background: var(--paper-raised); }
+  .card-reminder-row .btn-primary { grid-column: auto; min-height: 40px; padding: 8px 16px; }
+
+  /* stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  @media (min-width: 640px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+
+  .stat-tile {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 88px;
+    justify-content: center;
+  }
+  .stat-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.4rem;
+    font-weight: 500;
+  }
+  .stat-value.positive { color: var(--positive); }
+  .stat-value.negative { color: var(--negative); }
+  .stat-sub { font-size: 0.76rem; color: var(--ink-soft); }
+  .stat-tile.editable { cursor: pointer; }
+  .stat-tile.editable:hover { border-color: var(--brass); }
+  .income-edit { display: flex; gap: 6px; align-items: center; }
+  .income-edit input {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    font-family: var(--font-mono);
+  }
+  .income-edit button {
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 6px 9px;
+    cursor: pointer;
+    font-size: 0.78rem;
+  }
+  .income-edit .save { background: var(--brass); color: #fff; }
+  .income-edit .cancel { background: var(--paper-sunken); color: var(--ink-soft); }
+
+  /* panels */
+  .panel {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px 18px 20px;
+  }
+  .panel-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .panel-header h2 { font-size: 1.05rem; }
+  .panel-sub { font-size: 0.78rem; color: var(--ink-faint); font-family: var(--font-mono); }
+
+  /* quick add / planned form (shared grid) */
+  .quick-add {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 14px;
+  }
+  .quick-add h2 { grid-column: 1 / -1; font-size: 1.05rem; margin-bottom: 2px; }
+  @media (min-width: 640px) {
+    .quick-add { grid-template-columns: repeat(4, 1fr); align-items: end; }
+    .quick-add .field-wide { grid-column: span 2; }
+  }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 0.76rem; color: var(--ink-soft); }
+  .field .opt { color: var(--ink-faint); font-weight: 400; }
+  .field input, .field select {
+    padding: 9px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 40px;
+  }
+  .amount-input {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    padding: 0 10px;
+  }
+  .amount-input .currency-prefix { color: var(--ink-faint); font-family: var(--font-mono); }
+  .amount-input input {
+    border: none;
+    background: transparent;
+    padding: 9px 6px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    width: 100%;
+    min-height: 40px;
+  }
+  .amount-input input:focus-visible { outline: none; }
+  .amount-input:focus-within { outline: 2px solid var(--brass); outline-offset: 1px; }
+
+  .btn-primary, .btn-secondary {
+    border-radius: var(--radius-sm);
+    padding: 10px 18px;
+    font-weight: 600;
+    cursor: pointer;
+    min-height: 42px;
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .btn-primary { background: var(--brass); color: #fff; border: none; }
+  .btn-primary:hover { background: var(--brass-deep); }
+  .btn-secondary { background: transparent; color: var(--brass-deep); border: 1px solid var(--brass); }
+  .btn-secondary:hover { background: var(--brass-tint); }
+  @media (min-width: 640px) { .btn-primary, .btn-secondary { grid-column: auto; } }
+
+  .link-btn {
+    background: transparent;
+    border: none;
+    color: var(--brass-deep);
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 2px 4px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* dashboard grid */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+    align-items: start;
+  }
+  @media (min-width: 900px) {
+    .dashboard-grid { grid-template-columns: 1.6fr 1fr; }
+  }
+  .col-main, .col-side { display: flex; flex-direction: column; gap: 18px; }
+
+  /* ledger */
+  .ledger-list { display: flex; flex-direction: column; }
+  .ledger-row {
+    display: grid;
+    grid-template-columns: 3.4em 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--line);
+  }
+  .ledger-row:last-child { border-bottom: none; }
+  .ledger-date { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-faint); }
+  .ledger-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ledger-cat { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; }
+  .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ledger-note { font-size: 0.8rem; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ledger-amount {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  .ledger-del {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-faint);
+    border-radius: var(--radius-sm);
+    padding: 5px 9px;
+    font-size: 0.74rem;
+    cursor: pointer;
+  }
+  .ledger-del:hover { border-color: var(--negative); color: var(--negative); }
+  .ledger-del.confirming { border-color: var(--negative); color: var(--negative); background: var(--negative-tint); }
+  .empty-state { color: var(--ink-faint); font-size: 0.85rem; padding: 10px 2px; }
+
+  /* breakdown */
+  .breakdown-row { padding: 8px 0; }
+  .breakdown-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+    margin-bottom: 5px;
+    gap: 8px;
+  }
+  .breakdown-cat { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .breakdown-cat span.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .breakdown-amt { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .breakdown-delta { font-family: var(--font-mono); font-size: 0.72rem; margin-left: 6px; }
+  .breakdown-delta.up { color: var(--negative); }
+  .breakdown-delta.down { color: var(--positive); }
+  .bar-track { height: 6px; border-radius: 4px; background: var(--paper-sunken); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; }
+
+  /* insights */
+  .insights { display: flex; flex-direction: column; gap: 10px; }
+  .insight-card {
+    background: var(--paper-sunken);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+  .insight-card strong { font-weight: 600; }
+
+  /* money calendar */
+  .calendar-list { display: flex; flex-direction: column; }
+  .cal-row {
+    display: grid;
+    grid-template-columns: 2.6em 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .cal-row:last-child { border-bottom: none; }
+  .cal-date { text-align: center; font-family: var(--font-mono); line-height: 1.15; }
+  .cal-day { font-size: 1rem; font-weight: 500; }
+  .cal-mon { font-size: 0.68rem; color: var(--ink-faint); text-transform: uppercase; }
+  .cal-label { font-size: 0.85rem; }
+  .cal-sub { font-size: 0.74rem; color: var(--ink-faint); }
+  .cal-sub.overdue { color: var(--negative); }
+  .cal-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .cal-amount-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .cal-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 0.85rem; }
+
+  .calendar-edit { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
+  .edit-group-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-top: 4px; }
+  .edit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .edit-row .edit-label { flex: 1 1 9em; min-width: 7em; }
+  .edit-row input {
+    padding: 7px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .edit-row .edit-day, .edit-row .edit-stmt, .edit-row .edit-pay { width: 4.2em; }
+  .edit-suffix { font-size: 0.76rem; color: var(--ink-soft); }
+  .calendar-edit .btn-primary { grid-column: auto; justify-self: start; margin-top: 4px; }
+
+  /* planned purchases */
+  .planned-list { display: flex; flex-direction: column; margin-top: 4px; }
+  .planned-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .planned-row:last-child { border-bottom: none; }
+  .planned-name { font-size: 0.9rem; font-weight: 500; }
+  .planned-cat { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--ink-soft); margin-top: 2px; }
+  .planned-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+  .planned-actions { display: flex; gap: 6px; }
+  .btn-bought {
+    background: var(--positive-tint);
+    color: var(--positive);
+    border: 1px solid var(--positive);
+    border-radius: var(--radius-sm);
+    padding: 5px 9px;
+    font-size: 0.74rem;
+    cursor: pointer;
+  }
+  .btn-bought:hover { background: var(--positive); color: #fff; }
+
+  /* recurring payments */
+  .recurring-list { display: flex; flex-direction: column; }
+  .recurring-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .recurring-row:last-child { border-bottom: none; }
+  .recurring-row.paused { opacity: 0.55; }
+  .recurring-label { display: flex; align-items: center; gap: 7px; font-size: 0.88rem; font-weight: 500; }
+  .recurring-day { font-weight: 400; color: var(--ink-faint); font-size: 0.78rem; }
+  .recurring-sub { font-size: 0.76rem; color: var(--ink-soft); margin-top: 2px; }
+  .recurring-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+  .edit-amount { width: 5.5em; }
+  .edit-category {
+    padding: 7px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .edit-active-toggle { display: flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--ink-soft); }
+  .edit-start { width: 9em; }
+  .edit-row .edit-remove { color: var(--negative); text-decoration: none; }
+
+  /* tips */
+  .tips summary { list-style: none; cursor: pointer; }
+  .tips summary::-webkit-details-marker { display: none; }
+  .tips summary .panel-header { margin-bottom: 0; }
+  .tips summary .chev { font-family: var(--font-mono); color: var(--ink-faint); font-size: 0.9rem; }
+  .tips[open] summary .chev { transform: rotate(90deg); display: inline-block; }
+  .tips-body { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .tip { display: flex; gap: 10px; }
+  .tip-mark { width: 3px; border-radius: 2px; background: var(--brass); flex: none; }
+  .tip-text { font-size: 0.85rem; color: var(--ink-soft); line-height: 1.5; }
+  .tip-text strong { color: var(--ink); font-weight: 600; }
+  .tips-disclaimer { font-size: 0.74rem; color: var(--ink-faint); border-top: 1px solid var(--line); padding-top: 10px; }
+
+  .app-footer { text-align: center; color: var(--ink-faint); font-size: 0.75rem; padding-top: 8px; }
+
+  /* auth screen */
+  .auth-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .auth-card {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 28px 26px;
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .auth-card h1 { font-size: 1.4rem; }
+  .auth-card .tagline { margin: 2px 0 0; color: var(--ink-soft); font-size: 0.85rem; }
+  .auth-error {
+    background: var(--negative-tint);
+    color: var(--negative);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    font-size: 0.82rem;
+  }
+  .auth-error[hidden] { display: none; }
+  [hidden] { display: none !important; }
+  .signout-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    border-radius: var(--radius-sm);
+    padding: 5px 10px;
+    font-size: 0.74rem;
+    cursor: pointer;
+  }
+  .signout-btn:hover { border-color: var(--negative); color: var(--negative); }
+</style>
+</head>
+<body>
+
+<div id="auth-screen" class="auth-screen">
+  <form id="auth-form" class="auth-card" autocomplete="on">
+    <div>
+      <h1>Passbook</h1>
+      <p class="tagline">Sign in to your household ledger</p>
+    </div>
+    <div id="auth-error" class="auth-error" hidden></div>
+    <div class="field">
+      <label for="auth-email">Email</label>
+      <input id="auth-email" type="email" autocomplete="username" required />
+    </div>
+    <div class="field">
+      <label for="auth-password">Password</label>
+      <input id="auth-password" type="password" autocomplete="current-password" required />
+    </div>
+    <button type="submit" class="btn-primary" id="auth-submit">Sign in</button>
+  </form>
+</div>
+
+<div class="app" id="app" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <div>
+        <h1>Passbook</h1>
+        <p class="tagline">Your everyday money ledger</p>
+      </div>
+    </div>
+    <nav class="month-nav" aria-label="Pay period">
+      <button type="button" id="prev-month" aria-label="Previous month">‹</button>
+      <span id="month-label">—</span>
+      <button type="button" id="next-month" aria-label="Next month">›</button>
+    </nav>
+  </header>
+
+  <div id="sync-banner" class="sync-banner" hidden></div>
+
+  <div id="card-reminder-banner" class="card-reminder-banner" hidden></div>
+
+  <section class="stats" id="stats" aria-label="Monthly summary"></section>
+
+  <section class="quick-add-wrap">
+    <form id="add-form" class="quick-add" autocomplete="off">
+      <h2>Add an expense</h2>
+      <div class="field">
+        <label for="f-amount">Amount</label>
+        <div class="amount-input">
+          <span class="currency-prefix" id="currency-prefix">£</span>
+          <input id="f-amount" name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required />
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-category">Category</label>
+        <select id="f-category" name="category" required>
+          <option value="" disabled selected>Choose…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-date">Date</label>
+        <input id="f-date" name="date" type="date" required />
+      </div>
+      <div class="field field-wide">
+        <label for="f-note">Note <span class="opt">(optional)</span></label>
+        <input id="f-note" name="note" type="text" maxlength="80" placeholder="e.g. weekly shop" />
+      </div>
+      <button type="submit" class="btn-primary">Add expense</button>
+    </form>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="col-main">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Ledger</h2>
+          <span class="panel-sub" id="ledger-count"></span>
+        </div>
+        <div id="ledger-list" class="ledger-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Planned purchases</h2>
+          <span class="panel-sub" id="planned-summary"></span>
+        </div>
+        <form id="planned-form" class="quick-add" autocomplete="off" style="box-shadow:none;border:1px solid var(--line);padding:14px;">
+          <div class="field field-wide">
+            <label for="p-name">Item</label>
+            <input id="p-name" type="text" placeholder="e.g. TV" maxlength="60" required />
+          </div>
+          <div class="field">
+            <label for="p-amount">Est. cost</label>
+            <div class="amount-input">
+              <span class="currency-prefix">£</span>
+              <input id="p-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required />
+            </div>
+          </div>
+          <div class="field">
+            <label for="p-category">Category</label>
+            <select id="p-category" required>
+              <option value="" disabled selected>Choose…</option>
+            </select>
+          </div>
+          <button type="submit" class="btn-secondary">Add to plan</button>
+        </form>
+        <div id="planned-list" class="planned-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Recurring payments</h2>
+          <button type="button" class="link-btn" id="recurring-edit-toggle">Edit</button>
+        </div>
+        <p class="panel-sub" id="recurring-summary" style="margin:-6px 0 10px;"></p>
+        <form id="recurring-add-form" class="quick-add" autocomplete="off" style="box-shadow:none;border:1px solid var(--line);padding:14px;margin-bottom:14px;">
+          <h2 style="grid-column:1/-1;font-size:0.9rem;">Add a direct debit</h2>
+          <div class="field field-wide">
+            <label for="rec-label">Payment</label>
+            <input id="rec-label" type="text" placeholder="e.g. Sofa finance" maxlength="60" required />
+          </div>
+          <div class="field">
+            <label for="rec-amount">Amount</label>
+            <div class="amount-input">
+              <span class="currency-prefix">£</span>
+              <input id="rec-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required />
+            </div>
+          </div>
+          <div class="field">
+            <label for="rec-day">Day of month</label>
+            <input id="rec-day" type="number" inputmode="numeric" min="1" max="31" placeholder="e.g. 15" required />
+          </div>
+          <div class="field">
+            <label for="rec-category">Category</label>
+            <select id="rec-category" required>
+              <option value="" disabled selected>Choose…</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="rec-starts">Starts <span class="opt">(optional)</span></label>
+            <input id="rec-starts" type="month" />
+          </div>
+          <div class="field">
+            <label for="rec-total">Total to pay off <span class="opt">(optional, for installments)</span></label>
+            <div class="amount-input">
+              <span class="currency-prefix">£</span>
+              <input id="rec-total" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="leave blank if ongoing" />
+            </div>
+          </div>
+          <button type="submit" class="btn-secondary">Add direct debit</button>
+        </form>
+        <div id="recurring-list" class="recurring-list"></div>
+        <form id="recurring-edit-form" class="calendar-edit" hidden></form>
+      </div>
+    </div>
+
+    <aside class="col-side">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Money calendar</h2>
+          <button type="button" class="link-btn" id="cal-edit-toggle">Edit</button>
+        </div>
+        <div id="calendar-list" class="calendar-list"></div>
+        <form id="calendar-edit-form" class="calendar-edit" hidden></form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h2>Where it's going</h2></div>
+        <div id="breakdown" class="breakdown"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h2>Worth noting</h2></div>
+        <div id="insights" class="insights"></div>
+      </div>
+      <details class="panel tips">
+        <summary>
+          <div class="panel-header">
+            <h2>Ideas for your surplus</h2>
+            <span class="chev">›</span>
+          </div>
+        </summary>
+        <div class="tips-body">
+          <div class="tip"><div class="tip-mark"></div><div class="tip-text"><strong>Build a buffer first.</strong> Aim for 3–6 months of essential costs in an easy-access savings account before investing anything — it's what keeps a car repair or a lost month of income from becoming debt.</div></div>
+          <div class="tip"><div class="tip-mark"></div><div class="tip-text"><strong>Use your ISA allowance.</strong> UK residents can shelter up to £20,000 a year in a Cash or Stocks &amp; Shares ISA — interest, dividends and gains inside it are tax-free.</div></div>
+          <div class="tip"><div class="tip-mark"></div><div class="tip-text"><strong>Don't leave employer match on the table.</strong> If your workplace pension matches contributions, paying in at least up to that match is close to a guaranteed return before markets even move.</div></div>
+          <div class="tip"><div class="tip-mark"></div><div class="tip-text"><strong>Automate the transfer.</strong> Move a fixed amount to savings or investing right after payday, before it has a chance to be spent — pay yourself first, not last.</div></div>
+          <div class="tip"><div class="tip-mark"></div><div class="tip-text"><strong>Clear expensive debt first.</strong> Paying down anything charging more than roughly 8–10% interest usually beats what investing is likely to return after costs.</div></div>
+          <p class="tips-disclaimer">General information for education, not personalised financial advice — for decisions specific to your situation, a regulated financial adviser can weigh your full picture.</p>
+        </div>
+      </details>
+    </aside>
+  </section>
+
+  <details class="panel tips" id="export-panel">
+    <summary>
+      <div class="panel-header">
+        <h2>Export data (backup)</h2>
+        <span class="chev">›</span>
+      </div>
+    </summary>
+    <div class="tips-body">
+      <p class="tip-text">Everything currently in Passbook, as text. Click <strong>Select all</strong>, then copy (Ctrl/Cmd+C) and paste into a text file to keep a backup, or to move this data somewhere else.</p>
+      <button type="button" class="btn-secondary" id="export-select-btn" style="grid-column:auto;align-self:start;">Select all</button>
+      <textarea id="export-textarea" readonly spellcheck="false" style="width:100%;min-height:220px;margin-top:10px;font-family:var(--font-mono);font-size:0.72rem;line-height:1.4;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper);color:var(--ink);resize:vertical;"></textarea>
+    </div>
+  </details>
+
+  <footer class="app-footer">
+    <p>Private to your household · <button type="button" class="signout-btn" id="signout-btn">Sign out</button></p>
+  </footer>
+</div>
+
+
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
