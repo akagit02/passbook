@@ -9,6 +9,6 @@
 // and must never appear in a file that reaches a browser.
 
 window.PASSBOOK_CONFIG = {
-  SUPABASE_URL: "https://bvqhlmfacjhgbkwafjgq.supabase.co/rest/v1/",
+  SUPABASE_URL: "https://bvqhlmfacjhgbkwafjgq.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2cWhsbWZhY2poZ2Jrd2FmamdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NDg5ODgsImV4cCI6MjEwNDAyNDk4OH0.oDAHQUavWpZPCt0V-HD7jsc636-9cJ6wsdN3fyC5RuE"
 };
