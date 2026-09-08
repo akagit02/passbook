@@ -189,42 +189,58 @@
     return Math.max(0, remaining);
   }
 
-  // Generates any due-but-not-yet-logged recurring transactions and returns
-  // the array of newly created ones (already pushed into state.transactions)
-  // so the caller can batch-insert them into Supabase.
+  // Recurring transactions are never backfilled earlier than this date, no
+  // matter how old a rule's own start month is — keeps auto-generation from
+  // resurrecting history from before this feature's rollout.
+  var RECURRING_BACKFILL_FLOOR = new Date(2026, 7, 15); // 15 Aug 2026
+  var RECURRING_BACKFILL_FLOOR_MONTH = "2026-08";
+
+  // Generates any due-but-not-yet-logged recurring transactions — walking
+  // forward one pay-cycle month at a time, from RECURRING_BACKFILL_FLOOR (or
+  // the rule's own startMonth if later) up through the current month — so a
+  // rule that was missed for several months in a row gets every missed
+  // occurrence logged, not just the most recent one. Returns the array of
+  // newly created ones (already pushed into state.transactions) so the
+  // caller can batch-insert them into Supabase.
   function generateRecurringTransactions() {
-    var mk = todayStr().slice(0, 7);
     var now = new Date();
     var today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var currentMk = todayStr().slice(0, 7);
     var created = [];
 
     state.recurringExpenses.forEach(function (rule) {
       if (!rule.active) return;
-      if (rule.startMonth && mk < rule.startMonth) return; // hasn't started yet
-      var already = state.transactions.some(function (t) { return t.recurringId === rule.id && t.recurringOccurrence === mk; });
-      if (already) return;
+      var mk = (rule.startMonth && rule.startMonth > RECURRING_BACKFILL_FLOOR_MONTH) ? rule.startMonth : RECURRING_BACKFILL_FLOOR_MONTH;
 
-      var occDate = recurringOccurrenceDate(rule, mk);
-      if (occDate > today0) return; // this cycle hasn't happened yet
+      while (mk <= currentMk) {
+        var already = state.transactions.some(function (t) { return t.recurringId === rule.id && t.recurringOccurrence === mk; });
+        if (already) { mk = shiftMonth(mk, 1); continue; }
 
-      var amount = rule.amount;
-      if (rule.installment) {
-        var remaining = installmentRemaining(rule);
-        if (remaining <= 0) return; // fully paid off — stop generating
-        amount = Math.round(Math.min(amount, remaining) * 100) / 100;
+        var occDate = recurringOccurrenceDate(rule, mk);
+        if (occDate > today0) break; // this and every later occurrence hasn't happened yet
+        if (occDate < RECURRING_BACKFILL_FLOOR) { mk = shiftMonth(mk, 1); continue; }
+
+        var amount = rule.amount;
+        if (rule.installment) {
+          var remaining = installmentRemaining(rule);
+          if (remaining <= 0) break; // fully paid off — stop generating
+          amount = Math.round(Math.min(amount, remaining) * 100) / 100;
+        }
+
+        var t = {
+          id: genId(),
+          amount: amount,
+          date: todayStr(occDate),
+          categoryId: rule.categoryId,
+          note: rule.label,
+          recurringId: rule.id,
+          recurringOccurrence: mk
+        };
+        state.transactions.push(t);
+        created.push(t);
+
+        mk = shiftMonth(mk, 1);
       }
-
-      var t = {
-        id: genId(),
-        amount: amount,
-        date: todayStr(occDate),
-        categoryId: rule.categoryId,
-        note: rule.label,
-        recurringId: rule.id,
-        recurringOccurrence: mk
-      };
-      state.transactions.push(t);
-      created.push(t);
     });
 
     return created;
