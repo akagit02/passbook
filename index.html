@@ -442,6 +442,19 @@
   .bar-track { height: 6px; border-radius: 4px; background: var(--paper-sunken); overflow: hidden; }
   .bar-fill { height: 100%; border-radius: 4px; }
 
+  /* spending patterns */
+  .panel-select {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .breakdown-delta.flat { color: var(--ink-faint); }
+  .pattern-sub { font-size: 0.78rem; color: var(--ink-soft); margin-top: 4px; line-height: 1.4; }
+
   /* insights */
   .insights { display: flex; flex-direction: column; gap: 10px; }
   .insight-card {
@@ -779,6 +792,18 @@
       <div class="panel">
         <div class="panel-header"><h2>Where it's going</h2></div>
         <div id="breakdown" class="breakdown"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Spending patterns</h2>
+          <select class="panel-select" id="patterns-window" aria-label="Time window">
+            <option value="3">Last 3 months</option>
+            <option value="6" selected>Last 6 months</option>
+            <option value="12">Last 12 months</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+        <div id="patterns-list" class="patterns-list"></div>
       </div>
       <div class="panel">
         <div class="panel-header"><h2>Worth noting</h2></div>
