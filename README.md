@@ -1,4 +1,4 @@
-# Passbook 
+# Passbook  
 
 A personal expense tracker: quick expense logging, planned purchases, recurring
 direct debits, credit card statement reminders, and a pay-cycle-aware "leftover"
