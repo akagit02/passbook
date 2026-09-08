@@ -23,6 +23,11 @@
   var CAT_INDEX = {};
   CATEGORIES.forEach(function (c, i) { CAT_INDEX[c.id] = i; });
 
+  // "Paid using" is a free-text field backed by a datalist (see
+  // #payment-method-options in index.html), not a locked set of DB rows —
+  // this list just needs to match what's in that datalist.
+  var PAYMENT_METHODS = ["PCC", "RCC", "sal acc", "wife sal acc", "cur acc"];
+
   var editingIncome = false;
   var editingCalendar = false;
   var editingRecurring = false;
@@ -310,7 +315,8 @@
         '<div class="ledger-row" data-id="' + esc(t.id) + '">' +
         '<div class="ledger-date">' + esc(dateShort) + "</div>" +
         '<div class="ledger-main">' +
-        '<div class="ledger-cat"><span class="cat-dot" style="background:var(--cat-' + (CAT_INDEX[t.categoryId] + 1) + ')"></span>' + esc(cat.label) + "</div>" +
+        '<div class="ledger-cat"><span class="cat-dot" style="background:var(--cat-' + (CAT_INDEX[t.categoryId] + 1) + ')"></span>' + esc(cat.label) +
+        (t.paymentMethod ? ' <span class="pm-badge">' + esc(t.paymentMethod) + "</span>" : "") + "</div>" +
         (t.note ? '<div class="ledger-note">' + esc(t.note) + "</div>" : "") +
         "</div>" +
         '<div class="ledger-amount">' + fmtMoney(t.amount) + "</div>" +
@@ -855,13 +861,15 @@
   function rowToTx(r) {
     return {
       id: r.id, amount: Number(r.amount), date: r.date, categoryId: r.category_id,
-      note: r.note || "", recurringId: r.recurring_id || null, recurringOccurrence: r.recurring_occurrence || null
+      note: r.note || "", recurringId: r.recurring_id || null, recurringOccurrence: r.recurring_occurrence || null,
+      paymentMethod: r.payment_method || ""
     };
   }
   function txToRow(t) {
     return {
       id: t.id, user_id: currentUserId, amount: t.amount, date: t.date, category_id: t.categoryId,
-      note: t.note || "", recurring_id: t.recurringId || null, recurring_occurrence: t.recurringOccurrence || null
+      note: t.note || "", recurring_id: t.recurringId || null, recurring_occurrence: t.recurringOccurrence || null,
+      payment_method: t.paymentMethod || null
     };
   }
 
@@ -924,7 +932,10 @@
   }
 
   function addTransaction(data) {
-    var t = { id: genId(), amount: data.amount, date: data.date, categoryId: data.categoryId, note: data.note, recurringId: null, recurringOccurrence: null };
+    var t = {
+      id: genId(), amount: data.amount, date: data.date, categoryId: data.categoryId, note: data.note,
+      recurringId: null, recurringOccurrence: null, paymentMethod: data.paymentMethod || ""
+    };
     state.transactions.push(t);
     renderAll();
     dbCall(sb.from("transactions").insert(txToRow(t)));
@@ -968,8 +979,9 @@
       var categoryId = document.getElementById("f-category").value;
       var date = document.getElementById("f-date").value || todayStr();
       var note = document.getElementById("f-note").value.trim().slice(0, 80);
+      var paymentMethod = document.getElementById("f-payment-method").value.trim().slice(0, 40);
       if (!isFinite(amount) || amount <= 0 || !categoryId) return;
-      addTransaction({ amount: Math.round(amount * 100) / 100, date: date, categoryId: categoryId, note: note });
+      addTransaction({ amount: Math.round(amount * 100) / 100, date: date, categoryId: categoryId, note: note, paymentMethod: paymentMethod });
       document.getElementById("add-form").reset();
       document.getElementById("f-date").value = todayStr();
       document.getElementById("f-amount").focus();

@@ -395,6 +395,16 @@
   .ledger-cat { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; }
   .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .ledger-note { font-size: 0.8rem; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pm-badge {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    background: var(--paper-sunken);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 6px;
+    flex: none;
+  }
   .ledger-amount {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -648,6 +658,17 @@
         <select id="f-category" name="category" required>
           <option value="" disabled selected>Choose…</option>
         </select>
+      </div>
+      <div class="field">
+        <label for="f-payment-method">Paid using <span class="opt">(optional)</span></label>
+        <input id="f-payment-method" name="paymentMethod" type="text" list="payment-method-options" placeholder="Search…" maxlength="40" autocomplete="off" />
+        <datalist id="payment-method-options">
+          <option value="PCC"></option>
+          <option value="RCC"></option>
+          <option value="sal acc"></option>
+          <option value="wife sal acc"></option>
+          <option value="cur acc"></option>
+        </datalist>
       </div>
       <div class="field">
         <label for="f-date">Date</label>
