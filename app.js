@@ -32,6 +32,7 @@
   var editingCalendar = false;
   var editingRecurring = false;
   var currentUserId = null;
+  var patternsWindow = "6"; // "3" | "6" | "12" | "all"
 
   var state = {
     currency: "GBP",
@@ -199,6 +200,105 @@
     });
 
     return created;
+  }
+
+  // ---------- spending patterns ----------
+
+  var WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  function monthsAgoDate(n, from) {
+    from = from || new Date();
+    var y = from.getFullYear(), m = from.getMonth() - n;
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    var day = Math.min(from.getDate(), lastDay);
+    return new Date(y, m, day);
+  }
+
+  function patternsWindowStart(sel) {
+    if (sel === "all") return null;
+    return todayStr(monthsAgoDate(parseInt(sel, 10)));
+  }
+
+  function patternsPriorWindowRange(sel) {
+    if (sel === "all") return null;
+    var n = parseInt(sel, 10);
+    return { start: todayStr(monthsAgoDate(n * 2)), end: todayStr(monthsAgoDate(n)) };
+  }
+
+  function txSince(startStr) {
+    if (startStr == null) return state.transactions.slice();
+    return state.transactions.filter(function (t) { return t.date >= startStr; });
+  }
+
+  function txInRange(startStr, endExclusive) {
+    return state.transactions.filter(function (t) { return t.date >= startStr && t.date < endExclusive; });
+  }
+
+  function groupTxByCategory(txs) {
+    var out = {};
+    txs.forEach(function (t) {
+      (out[t.categoryId] = out[t.categoryId] || []).push(t);
+    });
+    return out;
+  }
+
+  function averageGapDays(dateStrs) {
+    if (dateStrs.length < 2) return null;
+    var sorted = dateStrs.slice().sort();
+    var first = new Date(sorted[0] + "T00:00:00");
+    var last = new Date(sorted[sorted.length - 1] + "T00:00:00");
+    var spanDays = (last - first) / 86400000;
+    return spanDays / (sorted.length - 1);
+  }
+
+  function mostCommonWeekday(dateStrs) {
+    if (!dateStrs.length) return null;
+    var counts = new Array(7).fill(0);
+    dateStrs.forEach(function (d) { counts[new Date(d + "T00:00:00").getDay()]++; });
+    var best = 0;
+    for (var i = 1; i < 7; i++) { if (counts[i] > counts[best]) best = i; }
+    return { day: best, count: counts[best] };
+  }
+
+  function computeCategoryPattern(catId, txs) {
+    var dates = txs.map(function (t) { return t.date; });
+    var total = txs.reduce(function (s, t) { return s + t.amount; }, 0);
+    return {
+      catId: catId,
+      count: txs.length,
+      avgAmount: total / txs.length,
+      avgGapDays: averageGapDays(dates),
+      weekday: txs.length >= 3 ? mostCommonWeekday(dates) : null
+    };
+  }
+
+  function computePatternsData(sel) {
+    var windowStart = patternsWindowStart(sel);
+    var currentTxs = txSince(windowStart);
+    var groups = groupTxByCategory(currentTxs);
+
+    var priorRange = patternsPriorWindowRange(sel);
+    var priorCounts = {};
+    if (priorRange) {
+      var priorTxs = txInRange(priorRange.start, priorRange.end);
+      priorTxs.forEach(function (t) { priorCounts[t.categoryId] = (priorCounts[t.categoryId] || 0) + 1; });
+    }
+
+    var rows = Object.keys(groups).map(function (catId) {
+      var row = computeCategoryPattern(catId, groups[catId]);
+      if (!priorRange) {
+        row.trend = null;
+      } else {
+        var prior = priorCounts[catId] || 0;
+        if (prior === 0) row.trend = { kind: "none" };
+        else if (prior === row.count) row.trend = { kind: "flat" };
+        else row.trend = { kind: row.count > prior ? "up" : "down", pct: Math.round(((row.count - prior) / prior) * 100) };
+      }
+      return row;
+    });
+
+    rows.sort(function (a, b) { return b.count - a.count; });
+    return rows;
   }
 
   // ---------- rendering ----------
@@ -372,6 +472,53 @@
         '<div class="breakdown-top"><div class="breakdown-cat"><span class="cat-dot" style="background:var(--cat-' + idx + ')"></span><span class="label">' + esc(cat.label) + "</span></div>" +
         '<div>' + '<span class="breakdown-amt">' + fmtMoney(r.amount) + "</span>" + deltaHtml + "</div></div>" +
         '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, (r.amount / max) * 100) + "%;background:var(--cat-" + idx + ')"></div></div>' +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function windowLabel(sel) {
+    if (sel === "all") return "all time";
+    return "the last " + sel + " months";
+  }
+
+  function renderPatterns() {
+    var el = document.getElementById("patterns-list");
+    var rows = computePatternsData(patternsWindow);
+
+    if (!state.transactions.length) {
+      el.innerHTML = '<p class="empty-state">Add a few expenses to see your spending patterns here.</p>';
+      return;
+    }
+    if (!rows.length) {
+      el.innerHTML = '<p class="empty-state">No expenses logged in ' + esc(windowLabel(patternsWindow)) + " — try a wider window.</p>";
+      return;
+    }
+
+    var max = rows[0].count;
+    el.innerHTML = rows.map(function (r) {
+      var cat = CATEGORIES[CAT_INDEX[r.catId]] || CATEGORIES[CATEGORIES.length - 1];
+      var idx = CAT_INDEX[r.catId] + 1;
+
+      var trendHtml = "";
+      if (r.trend) {
+        if (r.trend.kind === "up") trendHtml = '<span class="breakdown-delta up">+' + r.trend.pct + "%</span>";
+        else if (r.trend.kind === "down") trendHtml = '<span class="breakdown-delta down">−' + Math.abs(r.trend.pct) + "%</span>";
+        else if (r.trend.kind === "flat") trendHtml = '<span class="breakdown-delta flat">steady</span>';
+        else trendHtml = '<span class="breakdown-delta flat">no prior data</span>';
+      }
+
+      var subParts = [fmtMoney(r.avgAmount) + " avg"];
+      if (r.avgGapDays == null) subParts.push("only 1 purchase in this window");
+      else subParts.push("about every " + Math.round(r.avgGapDays) + (Math.round(r.avgGapDays) === 1 ? " day" : " days"));
+      if (r.weekday) subParts.push("mostly " + WEEKDAY_LABELS[r.weekday.day]);
+
+      return (
+        '<div class="breakdown-row">' +
+        '<div class="breakdown-top"><div class="breakdown-cat"><span class="cat-dot" style="background:var(--cat-' + idx + ')"></span><span class="label">' + esc(cat.label) + "</span></div>" +
+        '<div>' + '<span class="breakdown-amt">' + r.count + (r.count === 1 ? " time" : " times") + "</span>" + trendHtml + "</div></div>" +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, (r.count / max) * 100) + "%;background:var(--cat-" + idx + ')"></div></div>' +
+        '<div class="pattern-sub">' + esc(subParts.join(" · ")) + "</div>" +
         "</div>"
       );
     }).join("");
@@ -809,6 +956,7 @@
     renderStats();
     renderLedger();
     renderBreakdown();
+    renderPatterns();
     renderInsights();
     renderCalendarPanel();
     renderPlanned();
@@ -1065,6 +1213,13 @@
     });
   }
 
+  function wirePatternsWindow() {
+    document.getElementById("patterns-window").addEventListener("change", function (e) {
+      patternsWindow = e.target.value;
+      renderPatterns();
+    });
+  }
+
   function wireRecurringAddForm() {
     document.getElementById("recurring-add-form").addEventListener("submit", function (e) {
       e.preventDefault();
@@ -1232,6 +1387,7 @@
     wireRecurringEdit();
     wireRecurringAddForm();
     wireExportPanel();
+    wirePatternsWindow();
     wireMonthNav();
     wireAuthForm();
     document.getElementById("signout-btn").addEventListener("click", function () {
