@@ -45,6 +45,7 @@
     recurringExpenses: []
   };
   var viewMonth = null;
+  var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
 
   function todayStr(d) {
     d = d || new Date();
@@ -83,6 +84,33 @@
 
   function periodStartStr(mk) { return todayStr(periodStartDate(mk)); }
   function periodEndStr(mk) { return periodStartStr(shiftMonth(mk, 1)); } // exclusive
+
+  // ---------- custom date range (alternative to the pay-cycle period above) ----------
+
+  function customRangeEndExclusive(range) {
+    var d = new Date(range.end + "T00:00:00");
+    d.setDate(d.getDate() + 1);
+    return todayStr(d);
+  }
+
+  function activeRangeStr() {
+    if (customRange) return { start: customRange.start, end: customRangeEndExclusive(customRange) };
+    return { start: periodStartStr(viewMonth), end: periodEndStr(viewMonth) };
+  }
+
+  function activeRangeLabel() {
+    if (!customRange) return periodLabel(viewMonth);
+    var startD = new Date(customRange.start + "T00:00:00");
+    var endD = new Date(customRange.end + "T00:00:00");
+    var startStr = startD.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    var endStr = endD.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    return startStr + " – " + endStr;
+  }
+
+  function currentTxs() {
+    var r = activeRangeStr();
+    return state.transactions.filter(function (t) { return t.date >= r.start && t.date < r.end; });
+  }
 
   function periodLabel(mk) {
     var startD = periodStartDate(mk);
@@ -314,7 +342,10 @@
   }
 
   function renderMonthLabel() {
-    document.getElementById("month-label").textContent = periodLabel(viewMonth);
+    document.getElementById("month-label").textContent = activeRangeLabel();
+    document.getElementById("prev-month").hidden = !!customRange;
+    document.getElementById("next-month").hidden = !!customRange;
+    document.getElementById("range-clear").hidden = !customRange;
   }
 
   function leftoverSub(income, saved, cardsOwed) {
@@ -326,7 +357,7 @@
 
   function renderStats() {
     var el = document.getElementById("stats");
-    var txs = txForPeriod(viewMonth);
+    var txs = currentTxs();
     var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
     var income = state.income;
     var cardsOwed = totalOutstandingCardBalance();
@@ -397,13 +428,13 @@
   function renderLedger() {
     var listEl = document.getElementById("ledger-list");
     var countEl = document.getElementById("ledger-count");
-    var txs = txForPeriod(viewMonth).slice().sort(function (a, b) {
+    var txs = currentTxs().slice().sort(function (a, b) {
       return a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1;
     });
     countEl.textContent = txs.length ? txs.length + (txs.length === 1 ? " entry" : " entries") : "";
 
     if (!txs.length) {
-      listEl.innerHTML = '<p class="empty-state">No expenses logged for ' + esc(periodLabel(viewMonth)) + " yet — add your first one above.</p>";
+      listEl.innerHTML = '<p class="empty-state">No expenses logged for ' + esc(activeRangeLabel()) + " yet — add your first one above.</p>";
       return;
     }
 
@@ -445,9 +476,9 @@
 
   function renderBreakdown() {
     var el = document.getElementById("breakdown");
-    var txs = txForPeriod(viewMonth);
+    var txs = currentTxs();
     var sums = sumBy(txs);
-    var prevSums = sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
+    var prevSums = customRange ? {} : sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
     var rows = Object.keys(sums).map(function (catId) {
       return { catId: catId, amount: sums[catId] };
     }).sort(function (a, b) { return b.amount - a.amount; });
@@ -526,11 +557,11 @@
 
   function renderInsights() {
     var el = document.getElementById("insights");
-    var txs = txForPeriod(viewMonth);
+    var txs = currentTxs();
     var cards = [];
 
     if (!txs.length) {
-      cards.push("No expenses logged for " + esc(periodLabel(viewMonth)) + " yet. Once you add a few, this panel will surface patterns automatically.");
+      cards.push("No expenses logged for " + esc(activeRangeLabel()) + " yet. Once you add a few, this panel will surface patterns automatically.");
     } else {
       var sums = sumBy(txs);
       var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
@@ -539,7 +570,7 @@
       var pct = spent > 0 ? Math.round((top.amount / spent) * 100) : 0;
       cards.push("<strong>" + esc(topCat.label) + "</strong> is your biggest spend this period at " + fmtMoney(top.amount) + " (" + pct + "% of total).");
 
-      var prevSums = sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
+      var prevSums = customRange ? {} : sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
       var biggestJump = null;
       Object.keys(sums).forEach(function (catId) {
         var prev = prevSums[catId] || 0;
@@ -833,7 +864,7 @@
 
     var summary = fmtMoney(total) + " planned";
     if (state.income != null) {
-      var txs = txForPeriod(viewMonth);
+      var txs = currentTxs();
       var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
       var leftover = state.income - spent - totalOutstandingCardBalance();
       if (total <= leftover) {
@@ -1313,6 +1344,36 @@
     });
   }
 
+  function wireRangePicker() {
+    var toggleBtn = document.getElementById("range-toggle");
+    var clearBtn = document.getElementById("range-clear");
+    var form = document.getElementById("range-form");
+    var startInput = document.getElementById("range-start");
+    var endInput = document.getElementById("range-end");
+
+    toggleBtn.addEventListener("click", function () {
+      if (!form.hidden) { form.hidden = true; return; }
+      var r = activeRangeStr();
+      startInput.value = customRange ? customRange.start : r.start;
+      endInput.value = customRange ? customRange.end : todayStr(new Date(new Date(r.end + "T00:00:00").getTime() - 86400000));
+      form.hidden = false;
+    });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!startInput.value || !endInput.value || startInput.value > endInput.value) return;
+      customRange = { start: startInput.value, end: endInput.value };
+      form.hidden = true;
+      renderAll();
+    });
+
+    clearBtn.addEventListener("click", function () {
+      customRange = null;
+      form.hidden = true;
+      renderAll();
+    });
+  }
+
   // ---------- auth ----------
 
   function showAuthScreen() {
@@ -1389,6 +1450,7 @@
     wireExportPanel();
     wirePatternsWindow();
     wireMonthNav();
+    wireRangePicker();
     wireAuthForm();
     document.getElementById("signout-btn").addEventListener("click", function () {
       sb.auth.signOut();

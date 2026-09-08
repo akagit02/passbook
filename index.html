@@ -187,6 +187,24 @@
     text-align: center;
     white-space: nowrap;
   }
+  .range-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 10px;
+  }
+  .range-form input[type="date"] {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 4px 6px;
+    background: var(--paper);
+    color: var(--ink);
+  }
 
   /* sync banner */
   .sync-banner {
@@ -647,7 +665,15 @@
       <button type="button" id="prev-month" aria-label="Previous month">‹</button>
       <span id="month-label">—</span>
       <button type="button" id="next-month" aria-label="Next month">›</button>
+      <button type="button" id="range-clear" class="range-clear" hidden aria-label="Back to pay-cycle period">✕</button>
+      <button type="button" id="range-toggle" aria-label="Pick a custom date range">📅</button>
     </nav>
+    <form id="range-form" class="range-form" hidden>
+      <input type="date" id="range-start" required aria-label="Start date">
+      <span>–</span>
+      <input type="date" id="range-end" required aria-label="End date">
+      <button type="submit" class="btn-primary">Apply</button>
+    </form>
   </header>
 
   <div id="sync-banner" class="sync-banner" hidden></div>
