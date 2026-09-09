@@ -763,12 +763,13 @@
       <label for="auth-email">Email</label>
       <input id="auth-email" type="email" autocomplete="username" required />
     </div>
-    <div class="field">
+    <div class="field" id="auth-password-field">
       <label for="auth-password">Password</label>
       <input id="auth-password" type="password" autocomplete="current-password" required minlength="6" />
       <span class="field-hint" id="auth-password-hint" hidden>At least 6 characters</span>
     </div>
     <button type="submit" class="btn-primary" id="auth-submit">Sign in</button>
+    <button type="button" class="link-btn auth-toggle-mode" id="auth-forgot-link">Forgot password?</button>
     <button type="button" class="link-btn auth-toggle-mode" id="auth-toggle-mode">New here? Create an account</button>
   </form>
 </div>

@@ -91,6 +91,18 @@ defaults). It prints your live URL when done.
 Either way, redeploying later after an edit is the same action again — drag
 the folder in again, or re-run `npx vercel`.
 
+### Allow password reset emails to work
+
+The login screen's **Forgot password?** link emails a recovery link that
+lands on `reset-password.html`. Supabase rejects that redirect unless you
+allow it explicitly:
+
+1. In Supabase, go to **Authentication → URL Configuration → Redirect URLs**.
+2. Add `<your-deployed-url>/reset-password.html` (e.g.
+   `https://passbook-xyz.vercel.app/reset-password.html`).
+3. If you also test locally, add your local URL too (e.g.
+   `http://localhost:8765/reset-password.html`).
+
 ## 6. Bring your transaction history across
 
 The old Passbook (the Claude Artifact version) has an **Export data** panel

@@ -1400,6 +1400,8 @@
     var tagline = document.getElementById("auth-tagline");
     var submitBtn = document.getElementById("auth-submit");
     var toggleBtn = document.getElementById("auth-toggle-mode");
+    var forgotLink = document.getElementById("auth-forgot-link");
+    var passwordField = document.getElementById("auth-password-field");
     var passwordInput = document.getElementById("auth-password");
     var hint = document.getElementById("auth-password-hint");
     submitBtn.disabled = false;
@@ -1407,14 +1409,28 @@
       tagline.textContent = "Create your household ledger account";
       submitBtn.textContent = "Create account";
       toggleBtn.textContent = "Already have an account? Sign in";
+      passwordField.hidden = false;
+      passwordInput.required = true;
       passwordInput.autocomplete = "new-password";
       hint.hidden = false;
+      forgotLink.hidden = true;
+    } else if (mode === "forgot") {
+      tagline.textContent = "Reset your password";
+      submitBtn.textContent = "Send reset link";
+      toggleBtn.textContent = "Back to sign in";
+      passwordField.hidden = true;
+      passwordInput.required = false;
+      hint.hidden = true;
+      forgotLink.hidden = true;
     } else {
       tagline.textContent = "Sign in to your household ledger";
       submitBtn.textContent = "Sign in";
       toggleBtn.textContent = "New here? Create an account";
+      passwordField.hidden = false;
+      passwordInput.required = true;
       passwordInput.autocomplete = "current-password";
       hint.hidden = true;
+      forgotLink.hidden = false;
     }
   }
 
@@ -1461,7 +1477,11 @@
     var submitBtn = document.getElementById("auth-submit");
 
     document.getElementById("auth-toggle-mode").addEventListener("click", function () {
-      setAuthMode(authMode === "register" ? "signin" : "register");
+      setAuthMode(authMode === "signin" ? "register" : "signin");
+    });
+
+    document.getElementById("auth-forgot-link").addEventListener("click", function () {
+      setAuthMode("forgot");
     });
 
     form.addEventListener("submit", function (e) {
@@ -1476,6 +1496,27 @@
         errEl.hidden = false;
         return;
       }
+
+      if (authMode === "forgot") {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Sending…";
+        sb.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin + "/reset-password.html"
+        }).then(function (res) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Send reset link";
+          if (res.error) {
+            errEl.textContent = res.error.message || "Could not send reset link.";
+            errEl.hidden = false;
+            return;
+          }
+          setAuthMode("signin");
+          noticeEl.textContent = "If an account exists for that email, we've sent a password reset link.";
+          noticeEl.hidden = false;
+        });
+        return;
+      }
+
       if (password.length < 6) {
         errEl.textContent = "Password must be at least 6 characters.";
         errEl.hidden = false;
@@ -1500,9 +1541,9 @@
         }
         document.getElementById("auth-password").value = "";
         if (registering && !res.data.session) {
+          setAuthMode("signin");
           noticeEl.textContent = "Account created. Check your email to confirm your address, then sign in.";
           noticeEl.hidden = false;
-          setAuthMode("signin");
         }
       });
     });
