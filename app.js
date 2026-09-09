@@ -32,6 +32,7 @@
   var editingCalendar = false;
   var editingRecurring = false;
   var currentUserId = null;
+  var authMode = "signin";
   var patternsWindow = "6"; // "3" | "6" | "12" | "all"
 
   var state = {
@@ -1392,12 +1393,35 @@
 
   // ---------- auth ----------
 
+  function setAuthMode(mode) {
+    authMode = mode;
+    document.getElementById("auth-error").hidden = true;
+    document.getElementById("auth-notice").hidden = true;
+    var tagline = document.getElementById("auth-tagline");
+    var submitBtn = document.getElementById("auth-submit");
+    var toggleBtn = document.getElementById("auth-toggle-mode");
+    var passwordInput = document.getElementById("auth-password");
+    var hint = document.getElementById("auth-password-hint");
+    submitBtn.disabled = false;
+    if (mode === "register") {
+      tagline.textContent = "Create your household ledger account";
+      submitBtn.textContent = "Create account";
+      toggleBtn.textContent = "Already have an account? Sign in";
+      passwordInput.autocomplete = "new-password";
+      hint.hidden = false;
+    } else {
+      tagline.textContent = "Sign in to your household ledger";
+      submitBtn.textContent = "Sign in";
+      toggleBtn.textContent = "New here? Create an account";
+      passwordInput.autocomplete = "current-password";
+      hint.hidden = true;
+    }
+  }
+
   function showAuthScreen() {
     document.getElementById("app").hidden = true;
     document.getElementById("auth-screen").hidden = false;
-    var btn = document.getElementById("auth-submit");
-    btn.disabled = false;
-    btn.textContent = "Sign in";
+    setAuthMode("signin");
   }
 
   async function showApp() {
@@ -1428,25 +1452,57 @@
     }
   }
 
+  var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
   function wireAuthForm() {
     var form = document.getElementById("auth-form");
     var errEl = document.getElementById("auth-error");
+    var noticeEl = document.getElementById("auth-notice");
     var submitBtn = document.getElementById("auth-submit");
+
+    document.getElementById("auth-toggle-mode").addEventListener("click", function () {
+      setAuthMode(authMode === "register" ? "signin" : "register");
+    });
+
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       errEl.hidden = true;
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Signing in…";
+      noticeEl.hidden = true;
       var email = document.getElementById("auth-email").value.trim();
       var password = document.getElementById("auth-password").value;
-      sb.auth.signInWithPassword({ email: email, password: password }).then(function (res) {
+
+      if (!EMAIL_RE.test(email)) {
+        errEl.textContent = "Enter a valid email address.";
+        errEl.hidden = false;
+        return;
+      }
+      if (password.length < 6) {
+        errEl.textContent = "Password must be at least 6 characters.";
+        errEl.hidden = false;
+        return;
+      }
+
+      var registering = authMode === "register";
+      submitBtn.disabled = true;
+      submitBtn.textContent = registering ? "Creating account…" : "Signing in…";
+
+      var authCall = registering
+        ? sb.auth.signUp({ email: email, password: password })
+        : sb.auth.signInWithPassword({ email: email, password: password });
+
+      authCall.then(function (res) {
         submitBtn.disabled = false;
-        submitBtn.textContent = "Sign in";
+        submitBtn.textContent = registering ? "Create account" : "Sign in";
         if (res.error) {
-          errEl.textContent = res.error.message || "Could not sign in.";
+          errEl.textContent = res.error.message || (registering ? "Could not create account." : "Could not sign in.");
           errEl.hidden = false;
-        } else {
-          document.getElementById("auth-password").value = "";
+          return;
+        }
+        document.getElementById("auth-password").value = "";
+        if (registering && !res.data.session) {
+          noticeEl.textContent = "Account created. Check your email to confirm your address, then sign in.";
+          noticeEl.hidden = false;
+          setAuthMode("signin");
         }
       });
     });
