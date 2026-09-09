@@ -1452,6 +1452,52 @@
     });
   }
 
+  // ---------- side nav / profile ----------
+
+  function openSideNav() {
+    document.getElementById("side-nav").classList.add("open");
+    document.getElementById("nav-overlay").hidden = false;
+  }
+
+  function closeSideNav() {
+    document.getElementById("side-nav").classList.remove("open");
+    document.getElementById("nav-overlay").hidden = true;
+  }
+
+  function closeProfileModal() {
+    document.getElementById("profile-modal").hidden = true;
+    document.getElementById("profile-overlay").hidden = true;
+  }
+
+  async function openProfileModal() {
+    closeSideNav();
+    var res = await sb.auth.getUser();
+    var user = res && res.data ? res.data.user : null;
+    var email = (user && user.email) || "—";
+    var name = (user && user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) ||
+      (user && user.email ? user.email.split("@")[0] : "—");
+    var lastLogin = user && user.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString() : "—";
+    document.getElementById("profile-name").textContent = name;
+    document.getElementById("profile-email").textContent = email;
+    document.getElementById("profile-last-login").textContent = lastLogin;
+    document.getElementById("profile-modal").hidden = false;
+    document.getElementById("profile-overlay").hidden = false;
+  }
+
+  function wireSideNav() {
+    document.getElementById("nav-toggle").addEventListener("click", openSideNav);
+    document.getElementById("nav-close").addEventListener("click", closeSideNav);
+    document.getElementById("nav-overlay").addEventListener("click", closeSideNav);
+    document.getElementById("nav-home").addEventListener("click", closeSideNav);
+    document.getElementById("nav-profile").addEventListener("click", openProfileModal);
+    document.getElementById("profile-close").addEventListener("click", closeProfileModal);
+    document.getElementById("profile-overlay").addEventListener("click", closeProfileModal);
+    document.getElementById("profile-signout-btn").addEventListener("click", function () {
+      closeProfileModal();
+      sb.auth.signOut();
+    });
+  }
+
   // ---------- boot ----------
 
   function wireStatic() {
@@ -1468,9 +1514,7 @@
     wireMonthNav();
     wireRangePicker();
     wireAuthForm();
-    document.getElementById("signout-btn").addEventListener("click", function () {
-      sb.auth.signOut();
-    });
+    wireSideNav();
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible" && currentUserId) {
         var generated = generateRecurringTransactions();

@@ -630,6 +630,109 @@
     cursor: pointer;
   }
   .signout-btn:hover { border-color: var(--negative); color: var(--negative); }
+
+  /* side nav */
+  .nav-toggle {
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper-raised);
+    color: var(--ink);
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+  .nav-toggle:hover { border-color: var(--brass); }
+  .nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(16, 22, 27, 0.45);
+    z-index: 40;
+  }
+  .nav-overlay[hidden] { display: none; }
+  .side-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    max-width: 82vw;
+    background: var(--paper-raised);
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 14px;
+    gap: 4px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  .side-nav.open { transform: translateX(0); }
+  .side-nav-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding: 0 4px;
+  }
+  .side-nav-header span { font-family: var(--font-display); font-weight: 600; font-size: 1.1rem; }
+  .nav-close {
+    background: transparent;
+    border: none;
+    color: var(--ink-soft);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .side-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 12px 10px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .side-nav-item:hover { background: var(--paper-sunken); }
+
+  /* profile modal */
+  .profile-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .profile-modal[hidden] { display: none; }
+  .profile-card {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 22px 22px 24px;
+    width: 100%;
+    max-width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .profile-card-header { display: flex; align-items: center; justify-content: space-between; }
+  .profile-card-header h2 { font-size: 1.2rem; }
+  .profile-field { display: flex; flex-direction: column; gap: 2px; }
+  .profile-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+  .profile-value { font-size: 0.95rem; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -653,9 +756,43 @@
   </form>
 </div>
 
+<div id="nav-overlay" class="nav-overlay" hidden></div>
+<nav id="side-nav" class="side-nav" aria-label="Main menu">
+  <div class="side-nav-header">
+    <span>Menu</span>
+    <button type="button" id="nav-close" class="nav-close" aria-label="Close menu">✕</button>
+  </div>
+  <button type="button" class="side-nav-item" id="nav-home">🏠 Home</button>
+  <button type="button" class="side-nav-item" id="nav-profile">👤 Profile</button>
+</nav>
+
+<div id="profile-overlay" class="nav-overlay" hidden></div>
+<div id="profile-modal" class="profile-modal" hidden role="dialog" aria-modal="true" aria-label="Profile">
+  <div class="profile-card">
+    <div class="profile-card-header">
+      <h2>Profile</h2>
+      <button type="button" id="profile-close" class="nav-close" aria-label="Close profile">✕</button>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Name</span>
+      <span id="profile-name" class="profile-value">—</span>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Email</span>
+      <span id="profile-email" class="profile-value">—</span>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Last logged in</span>
+      <span id="profile-last-login" class="profile-value">—</span>
+    </div>
+    <button type="button" class="btn-primary" id="profile-signout-btn" style="margin-top:4px;">Log out</button>
+  </div>
+</div>
+
 <div class="app" id="app" hidden>
   <header class="topbar">
     <div class="brand">
+      <button type="button" id="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</button>
       <div>
         <h1>Passbook</h1>
         <p class="tagline">Your everyday money ledger</p>
@@ -869,7 +1006,7 @@
   </details>
 
   <footer class="app-footer">
-    <p>Private to your household · <button type="button" class="signout-btn" id="signout-btn">Sign out</button></p>
+    <p>Private to your household</p>
   </footer>
 </div>
 
