@@ -66,6 +66,10 @@
   };
   var viewMonth = null;
   var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
+  var LEDGER_COLLAPSE_LIMIT = 3;
+  var ledgerExpanded = false;
+  var plannedExpanded = false;
+  var recurringListExpanded = false;
 
   function todayStr(d) {
     d = d || new Date();
@@ -495,7 +499,7 @@
       return;
     }
 
-    listEl.innerHTML = txs.map(function (t) {
+    var rowsHtml = txs.map(function (t) {
       var cat = CATEGORIES[CAT_INDEX[t.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var d = new Date(t.date + "T00:00:00");
       var dateShort = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
@@ -522,7 +526,27 @@
         '<button type="button" class="ledger-del" data-id="' + esc(t.id) + '">Delete</button>' +
         "</div>"
       );
-    }).join("");
+    });
+
+    var visibleHtml = rowsHtml.slice(0, LEDGER_COLLAPSE_LIMIT).join("");
+    var restCount = rowsHtml.length - LEDGER_COLLAPSE_LIMIT;
+    var restHtml = "";
+    if (restCount > 0) {
+      restHtml = '<div class="ledger-rest"' + (ledgerExpanded ? "" : " hidden") + ">" +
+        rowsHtml.slice(LEDGER_COLLAPSE_LIMIT).join("") + "</div>" +
+        '<button type="button" class="list-toggle-btn" id="ledger-toggle">' +
+        (ledgerExpanded ? "Show less" : "Show " + restCount + " more " + (restCount === 1 ? "entry" : "entries")) +
+        "</button>";
+    }
+    listEl.innerHTML = visibleHtml + restHtml;
+
+    var ledgerToggle = document.getElementById("ledger-toggle");
+    if (ledgerToggle) {
+      ledgerToggle.addEventListener("click", function () {
+        ledgerExpanded = !ledgerExpanded;
+        renderLedger();
+      });
+    }
 
     listEl.querySelectorAll(".ledger-del").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -1017,7 +1041,7 @@
     }
     summaryEl.textContent = summary;
 
-    listEl.innerHTML = items.map(function (p) {
+    var rowsHtml = items.map(function (p) {
       var cat = CATEGORIES[CAT_INDEX[p.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var idx = CAT_INDEX[p.categoryId] + 1;
       return (
@@ -1030,6 +1054,17 @@
         "</div>"
       );
     }).join("");
+
+    listEl.innerHTML =
+      '<button type="button" class="list-toggle-btn list-toggle-btn-top" id="planned-toggle">' +
+      (plannedExpanded ? "Hide" : "Show") + " " + items.length + (items.length === 1 ? " item" : " items") +
+      "</button>" +
+      '<div class="planned-rows"' + (plannedExpanded ? "" : " hidden") + ">" + rowsHtml + "</div>";
+
+    document.getElementById("planned-toggle").addEventListener("click", function () {
+      plannedExpanded = !plannedExpanded;
+      renderPlanned();
+    });
 
     listEl.querySelectorAll(".btn-bought").forEach(function (btn) {
       btn.addEventListener("click", function () { markPlannedBought(btn.dataset.id); });
@@ -1069,7 +1104,7 @@
       return;
     }
 
-    listEl.innerHTML = rules.map(function (r) {
+    var rowsHtml = rules.map(function (r) {
       var cat = CATEGORIES[CAT_INDEX[r.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var idx = CAT_INDEX[r.categoryId] + 1;
       var subParts = [cat.label];
@@ -1091,6 +1126,17 @@
         "</div>"
       );
     }).join("");
+
+    listEl.innerHTML =
+      '<button type="button" class="list-toggle-btn list-toggle-btn-top" id="recurring-list-toggle">' +
+      (recurringListExpanded ? "Hide" : "Show") + " " + rules.length + (rules.length === 1 ? " payment" : " payments") +
+      "</button>" +
+      '<div class="recurring-rows"' + (recurringListExpanded ? "" : " hidden") + ">" + rowsHtml + "</div>";
+
+    document.getElementById("recurring-list-toggle").addEventListener("click", function () {
+      recurringListExpanded = !recurringListExpanded;
+      renderRecurring();
+    });
   }
 
   function renderRecurringEditForm() {
@@ -1478,10 +1524,12 @@
   function wireMonthNav() {
     document.getElementById("prev-month").addEventListener("click", function () {
       viewMonth = shiftMonth(viewMonth, -1);
+      ledgerExpanded = false;
       renderAll();
     });
     document.getElementById("next-month").addEventListener("click", function () {
       viewMonth = shiftMonth(viewMonth, 1);
+      ledgerExpanded = false;
       renderAll();
     });
   }
@@ -1505,12 +1553,14 @@
       e.preventDefault();
       if (!startInput.value || !endInput.value || startInput.value > endInput.value) return;
       customRange = { start: startInput.value, end: endInput.value };
+      ledgerExpanded = false;
       form.hidden = true;
       renderAll();
     });
 
     clearBtn.addEventListener("click", function () {
       customRange = null;
+      ledgerExpanded = false;
       form.hidden = true;
       renderAll();
     });
