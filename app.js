@@ -7,21 +7,65 @@
     window.PASSBOOK_CONFIG.SUPABASE_ANON_KEY
   );
 
+  // `discretionary` marks the categories the "where you could cut" analysis is
+  // allowed to suggest trimming. Everything without it is treated as a cost
+  // you can't simply decide to stop paying — it also forms the "essential
+  // spend" figure the emergency-fund target is sized against.
   var CATEGORIES = [
     { id: "housing", label: "Housing" },
     { id: "groceries", label: "Groceries" },
     { id: "transport", label: "Transport" },
-    { id: "eating_out", label: "Eating out" },
+    { id: "eating_out", label: "Eating out", discretionary: true },
     { id: "bills", label: "Bills & utilities" },
-    { id: "shopping", label: "Shopping" },
+    { id: "shopping", label: "Shopping", discretionary: true },
     { id: "health", label: "Health" },
-    { id: "entertainment", label: "Entertainment" },
+    { id: "entertainment", label: "Entertainment", discretionary: true },
     { id: "other", label: "Other" },
     { id: "insurance", label: "Insurance" },
     { id: "savings", label: "Savings" }
   ];
   var CAT_INDEX = {};
   CATEGORIES.forEach(function (c, i) { CAT_INDEX[c.id] = i; });
+
+  // ---------- savings ----------
+
+  // Money put aside is logged as an ordinary transaction in this category (so
+  // it lands in the ledger and comes off "left over" through the same path as
+  // any other money leaving a bank account), paired with a row in
+  // savings_contributions holding the part the ledger has no room for: where
+  // it went. Everything that treats transactions as *spending* has to exclude
+  // this category — see spendingTxs().
+  var SAVINGS_CAT = "savings";
+
+  // `tier` is what the allocation advice reasons about: cash is instantly
+  // reachable and doesn't move in value, low is capital-preservation with a
+  // modest yield, growth is expected to return more over long periods while
+  // being free to fall in the short ones. `isa` marks the two that draw on the
+  // annual ISA allowance.
+  var SAVINGS_VEHICLES = [
+    { id: "savings_account", label: "Savings account", tier: "cash" },
+    { id: "current_account", label: "Current account", tier: "cash" },
+    { id: "cash", label: "Cash at home", tier: "cash" },
+    { id: "cash_isa", label: "Cash ISA", tier: "low", isa: true },
+    { id: "premium_bonds", label: "Premium bonds", tier: "low" },
+    { id: "stocks_isa", label: "Stocks & shares ISA", tier: "growth", isa: true },
+    { id: "stocks_general", label: "Stocks (outside an ISA)", tier: "growth" },
+    { id: "pension", label: "Pension", tier: "growth" },
+    { id: "other", label: "Something else", tier: "other" }
+  ];
+  var VEHICLE_BY_ID = {};
+  SAVINGS_VEHICLES.forEach(function (v) { VEHICLE_BY_ID[v.id] = v; });
+
+  var TIER_LABELS = { cash: "Easy access cash", low: "Lower risk", growth: "Growth / market risk", other: "Other" };
+
+  // UK ISA subscription limit and tax-year boundary (6 April). Both are
+  // policy numbers that can change in a Budget — they live here as named
+  // constants so updating them is a one-line change.
+  var ISA_ANNUAL_ALLOWANCE = 20000;
+  var TAX_YEAR_START_MONTH = 3; // April, 0-indexed
+  var TAX_YEAR_START_DAY = 6;
+
+  function vehicleFor(id) { return VEHICLE_BY_ID[id] || VEHICLE_BY_ID.other; }
 
   // "Paid using" is a free-text field backed by a datalist (see
   // #payment-method-options in index.html), not a locked set of DB rows —
@@ -47,6 +91,14 @@
 
   function isCardTransaction(t) { return !!cardForPaymentMethod(t.paymentMethod); }
 
+  function isSavingsTx(t) { return t.categoryId === SAVINGS_CAT; }
+
+  // Everything that answers "what did I spend?" — the breakdown, the patterns,
+  // the insights, the cut analysis — has to run through this. Savings sitting
+  // in the same transactions table would otherwise show up as the third
+  // biggest "expense" of the month.
+  function spendingTxs(txs) { return txs.filter(function (t) { return !isSavingsTx(t); }); }
+
   var editingIncome = false;
   var editingCalendar = false;
   var editingRecurring = false;
@@ -62,7 +114,9 @@
     transactions: [],
     plannedExpenses: [],
     cardBalances: [],
-    recurringExpenses: []
+    recurringExpenses: [],
+    savingsContributions: [],
+    savingsGoals: []
   };
   var viewMonth = null;
   var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
@@ -72,6 +126,9 @@
   var recurringListExpanded = false;
   var breakdownExpanded = false;
   var patternsExpanded = false;
+  var currentView = "home"; // "home" | "savings"
+  var showingGoalForm = false;
+  var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
 
   function todayStr(d) {
     d = d || new Date();
@@ -205,11 +262,23 @@
       .reduce(function (s, b) { return s + b.amount; }, 0);
   }
 
+  // Money deliberately put aside is still money that has left the account, so
+  // it comes off "left over" exactly like spending does — but it isn't
+  // spending, and lumping the two together would make a good month (a big
+  // transfer into an ISA) look identical to a bad one (a big shopping spree).
+  // So it's tracked as its own figure. A savings transfer is always treated as
+  // cash leaving now, never as card credit, because that's what it is: you
+  // can't move money into a savings pot on a credit card.
   function cycleFinancials(txs, startStr, endExclusiveStr) {
-    var cashSpent = txs.reduce(function (s, t) { return s + (isCardTransaction(t) ? 0 : t.amount); }, 0);
+    var cashSpent = 0;
+    var putAside = 0;
+    txs.forEach(function (t) {
+      if (isSavingsTx(t)) { putAside += t.amount; return; }
+      if (!isCardTransaction(t)) cashSpent += t.amount;
+    });
     var cardDues = cardDuesInRange(startStr, endExclusiveStr);
-    var leftover = state.income == null ? null : state.income - cashSpent - cardDues;
-    return { cashSpent: cashSpent, cardDues: cardDues, leftover: leftover };
+    var leftover = state.income == null ? null : state.income - cashSpent - putAside - cardDues;
+    return { cashSpent: cashSpent, putAside: putAside, cardDues: cardDues, leftover: leftover };
   }
 
   // ---------- recurring / direct debits ----------
@@ -364,13 +433,13 @@
 
   function computePatternsData(sel) {
     var windowStart = patternsWindowStart(sel);
-    var currentTxs = txSince(windowStart);
+    var currentTxs = spendingTxs(txSince(windowStart));
     var groups = groupTxByCategory(currentTxs);
 
     var priorRange = patternsPriorWindowRange(sel);
     var priorCounts = {};
     if (priorRange) {
-      var priorTxs = txInRange(priorRange.start, priorRange.end);
+      var priorTxs = spendingTxs(txInRange(priorRange.start, priorRange.end));
       priorTxs.forEach(function (t) { priorCounts[t.categoryId] = (priorCounts[t.categoryId] || 0) + 1; });
     }
 
@@ -410,22 +479,28 @@
     document.getElementById("range-clear").hidden = !customRange;
   }
 
-  function leftoverSub(income, saved, cardDues) {
+  function leftoverSub(income, saved, cardDues, putAside) {
     if (income == null) return "add income to see this";
     var base = saved >= 0 ? "under budget" : "over budget";
-    if (cardDues > 0) return base + " · includes " + fmtMoney(cardDues) + " due on cards this period";
-    return base;
+    var extras = [];
+    if (cardDues > 0) extras.push("includes " + fmtMoney(cardDues) + " due on cards");
+    if (putAside > 0) extras.push("after " + fmtMoney(putAside) + " put aside");
+    return extras.length ? base + " · " + extras.join(" · ") : base;
   }
 
   function renderStats() {
     var el = document.getElementById("stats");
     var txs = currentTxs();
     var range = activeRangeStr();
-    var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
+    var spendTxs = spendingTxs(txs);
+    var spent = spendTxs.reduce(function (s, t) { return s + t.amount; }, 0);
     var income = state.income;
     var fin = cycleFinancials(txs, range.start, range.end);
     var saved = fin.leftover;
-    var rate = income != null && income > 0 ? (saved / income) * 100 : null;
+    // Savings rate is what you deliberately moved into savings, not what
+    // happened to be left at the end — those are very different achievements,
+    // and only the first is something you chose.
+    var rate = income != null && income > 0 ? (fin.putAside / income) * 100 : null;
 
     var incomeTileInner;
     if (editingIncome) {
@@ -446,23 +521,30 @@
 
     var savedClass = saved == null ? "" : saved >= 0 ? "positive" : "negative";
     var rateText = rate == null ? "—" : Math.round(rate) + "%";
+    var rateClass = rate == null ? "" : rate > 0 ? "positive" : "";
+    var putAsideCount = txs.length - spendTxs.length;
 
     el.innerHTML =
       '<div class="stat-tile editable" id="income-tile">' + incomeTileInner + "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Spent this period</div>' +
       '<div class="stat-value">' + fmtMoney(spent) + "</div>" +
-      '<div class="stat-sub">' + txs.length + (txs.length === 1 ? " expense" : " expenses") + "</div>" +
+      '<div class="stat-sub">' + spendTxs.length + (spendTxs.length === 1 ? " expense" : " expenses") + "</div>" +
+      "</div>" +
+      '<div class="stat-tile">' +
+      '<div class="stat-label">Put aside</div>' +
+      '<div class="stat-value ' + (fin.putAside > 0 ? "positive" : "") + '">' + fmtMoney(fin.putAside) + "</div>" +
+      '<div class="stat-sub">' + (putAsideCount ? putAsideCount + (putAsideCount === 1 ? " transfer" : " transfers") : "nothing saved yet") + "</div>" +
       "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Left over</div>' +
       '<div class="stat-value ' + savedClass + '">' + (saved == null ? "—" : fmtMoney(saved)) + "</div>" +
-      '<div class="stat-sub">' + leftoverSub(income, saved, fin.cardDues) + "</div>" +
+      '<div class="stat-sub">' + leftoverSub(income, saved, fin.cardDues, fin.putAside) + "</div>" +
       "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Savings rate</div>' +
-      '<div class="stat-value ' + savedClass + '">' + rateText + "</div>" +
-      '<div class="stat-sub">of income kept</div>' +
+      '<div class="stat-value ' + rateClass + '">' + rateText + "</div>" +
+      '<div class="stat-sub">of income put aside</div>' +
       "</div>";
 
     if (!editingIncome) {
@@ -570,9 +652,8 @@
 
   function renderBreakdown() {
     var el = document.getElementById("breakdown");
-    var txs = currentTxs();
-    var sums = sumBy(txs);
-    var prevSums = customRange ? {} : sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
+    var sums = sumBy(spendingTxs(currentTxs()));
+    var prevSums = customRange ? {} : sumBy(spendingTxs(txForPeriod(shiftMonth(viewMonth, -1))));
     var rows = Object.keys(sums).map(function (catId) {
       return { catId: catId, amount: sums[catId] };
     }).sort(function (a, b) { return b.amount - a.amount; });
@@ -673,7 +754,8 @@
 
   function renderInsights() {
     var el = document.getElementById("insights");
-    var txs = currentTxs();
+    var allTxs = currentTxs();
+    var txs = spendingTxs(allTxs);
     var cards = [];
 
     if (!txs.length) {
@@ -686,7 +768,7 @@
       var pct = spent > 0 ? Math.round((top.amount / spent) * 100) : 0;
       cards.push("<strong>" + esc(topCat.label) + "</strong> is your biggest spend this period at " + fmtMoney(top.amount) + " (" + pct + "% of total).");
 
-      var prevSums = customRange ? {} : sumBy(txForPeriod(shiftMonth(viewMonth, -1)));
+      var prevSums = customRange ? {} : sumBy(spendingTxs(txForPeriod(shiftMonth(viewMonth, -1))));
       var biggestJump = null;
       Object.keys(sums).forEach(function (catId) {
         var prev = prevSums[catId] || 0;
@@ -702,16 +784,18 @@
 
       if (state.income != null && state.income > 0) {
         var range = activeRangeStr();
-        var saved = cycleFinancials(txs, range.start, range.end).leftover;
-        var rate = (saved / state.income) * 100;
-        if (rate >= 20) {
-          cards.push("You're saving " + Math.round(rate) + "% of income this period — ahead of the common 20% guideline.");
+        var fin = cycleFinancials(allTxs, range.start, range.end);
+        var rate = (fin.putAside / state.income) * 100;
+        if (fin.leftover < 0) {
+          cards.push("Spending has outpaced income this period by " + fmtMoney(Math.abs(fin.leftover)) + ".");
+        } else if (rate >= 20) {
+          cards.push("You've put aside " + Math.round(rate) + "% of income this period — ahead of the common 20% guideline.");
         } else if (rate >= 10) {
-          cards.push("Saving " + Math.round(rate) + "% of income so far this period, getting closer to the 20% guideline some planners suggest.");
-        } else if (rate >= 0) {
-          cards.push("Only " + Math.round(rate) + "% of income left over this period — " + esc(topCat.label) + " is where most of it went.");
+          cards.push("You've put aside " + Math.round(rate) + "% of income so far this period, getting closer to the 20% guideline some planners suggest.");
+        } else if (fin.putAside > 0) {
+          cards.push("Only " + Math.round(rate) + "% of income put aside this period, with " + fmtMoney(fin.leftover) + " still unspent — the Savings tab can log a transfer.");
         } else {
-          cards.push("Spending has outpaced income this period by " + fmtMoney(Math.abs(saved)) + ".");
+          cards.push(fmtMoney(fin.leftover) + " is unspent this period but none of it has been put aside yet — the Savings tab can log a transfer.");
         }
       } else {
         cards.push("Add your monthly income above to see a savings rate here.");
@@ -1193,6 +1277,674 @@
     if (editingRecurring) { renderRecurringEditForm(); } else { renderRecurring(); }
   }
 
+  // ---------- savings: shared calculations ----------
+
+  function median(nums) {
+    if (!nums.length) return 0;
+    var s = nums.slice().sort(function (a, b) { return a - b; });
+    var mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+
+  // The UK tax year runs 6 April to 5 April, and the ISA allowance resets with
+  // it — an unused allowance doesn't roll over, which is the whole reason this
+  // is worth showing.
+  function taxYearRange(d) {
+    d = d || new Date();
+    var boundary = new Date(d.getFullYear(), TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY);
+    var startYear = d >= boundary ? d.getFullYear() : d.getFullYear() - 1;
+    var end = new Date(startYear + 1, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY);
+    return {
+      start: todayStr(new Date(startYear, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY)),
+      end: todayStr(end),
+      endDate: end,
+      label: startYear + "/" + String((startYear + 1) % 100).padStart(2, "0")
+    };
+  }
+
+  function contributionsInRange(startStr, endExclusiveStr) {
+    return state.savingsContributions.filter(function (c) {
+      return c.date >= startStr && c.date < endExclusiveStr;
+    });
+  }
+
+  function sumAmounts(rows) { return rows.reduce(function (s, r) { return s + r.amount; }, 0); }
+
+  function savedTowards(goalId) {
+    return sumAmounts(state.savingsContributions.filter(function (c) { return c.goalId === goalId; }));
+  }
+
+  // Totals for the last `months` *complete* calendar months, oldest first. The
+  // current month is deliberately left out — it's only part-way through, and
+  // including it would drag every average down and make spending look like
+  // it's falling every time you check early in the month.
+  function monthlyTotals(months, predicate) {
+    var now = new Date();
+    var out = [];
+    for (var i = months; i >= 1; i--) {
+      var from = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      var to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      var startStr = todayStr(from), endStr = todayStr(to);
+      var total = 0;
+      state.transactions.forEach(function (t) {
+        if (t.date >= startStr && t.date < endStr && predicate(t)) total += t.amount;
+      });
+      out.push(total);
+    }
+    return out;
+  }
+
+  function categoryMonthlyTotals(catId, months) {
+    return monthlyTotals(months, function (t) { return t.categoryId === catId; });
+  }
+
+  // What it costs to simply keep going: everything that isn't discretionary
+  // and isn't a savings transfer. This is what an emergency fund is sized
+  // against — three to six months of *this*, not of total outgoings.
+  function medianEssentialMonthly() {
+    return median(monthlyTotals(6, function (t) {
+      var cat = CATEGORIES[CAT_INDEX[t.categoryId]];
+      return cat && !cat.discretionary && !isSavingsTx(t);
+    }));
+  }
+
+  function medianMonthlySavings() {
+    return median(monthlyTotals(6, isSavingsTx));
+  }
+
+  // Leftover for each of the last `n` complete pay cycles, so goal pacing can
+  // be checked against what actually tends to be spare rather than against
+  // income on paper.
+  function medianMonthlyLeftover(n) {
+    if (state.income == null) return null;
+    var vals = [];
+    var mk = currentPeriodKey();
+    for (var i = 1; i <= n; i++) {
+      var m = shiftMonth(mk, -i);
+      var start = periodStartStr(m), end = periodEndStr(m);
+      var txs = state.transactions.filter(function (t) { return t.date >= start && t.date < end; });
+      var fin = cycleFinancials(txs, start, end);
+      if (fin.leftover != null) vals.push(fin.leftover);
+    }
+    return vals.length ? median(vals) : null;
+  }
+
+  function monthsBetween(fromStr, toStr) {
+    var a = new Date(fromStr + "T00:00:00"), b = new Date(toStr + "T00:00:00");
+    return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + (b.getDate() - a.getDate()) / 30.4;
+  }
+
+  function goalProgress(g) {
+    var saved = savedTowards(g.id);
+    var remaining = Math.max(0, g.targetAmount - saved);
+    var monthsLeft = monthsBetween(todayStr(), g.targetDate);
+    var requiredMonthly = remaining <= 0 ? 0 : monthsLeft <= 0 ? remaining : remaining / monthsLeft;
+    var contribs = state.savingsContributions.filter(function (c) { return c.goalId === g.id; });
+    var actualMonthly = median(monthlyTotals(6, function (t) {
+      return contribs.some(function (c) { return c.transactionId === t.id; });
+    }));
+    // A goal set last week has no pace yet — judging it against a six-month
+    // median would call every new goal "behind" on the day it's created, which
+    // is noise rather than information.
+    var monthsElapsed = monthsBetween(g.startDate, todayStr());
+    return {
+      saved: saved,
+      remaining: remaining,
+      pct: g.targetAmount > 0 ? Math.min(100, (saved / g.targetAmount) * 100) : 0,
+      monthsLeft: monthsLeft,
+      requiredMonthly: requiredMonthly,
+      actualMonthly: actualMonthly,
+      complete: remaining <= 0,
+      overdue: monthsLeft <= 0 && remaining > 0,
+      tooNew: monthsElapsed < 2
+    };
+  }
+
+  // ---------- savings: rendering ----------
+
+  function renderSavingsStats() {
+    var el = document.getElementById("savings-stats");
+    var all = sumAmounts(state.savingsContributions);
+    var ty = taxYearRange();
+    var thisTaxYear = sumAmounts(contributionsInRange(ty.start, ty.end));
+    var now = new Date();
+    var monthStart = todayStr(new Date(now.getFullYear(), now.getMonth(), 1));
+    var monthEnd = todayStr(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+    var thisMonth = sumAmounts(contributionsInRange(monthStart, monthEnd));
+    var typical = medianMonthlySavings();
+
+    var goals = state.savingsGoals.filter(function (g) { return !g.archived; });
+    var onTrack = goals.filter(function (g) {
+      var p = goalProgress(g);
+      return p.complete || (!p.overdue && (p.tooNew || p.actualMonthly >= p.requiredMonthly));
+    }).length;
+
+    el.innerHTML =
+      '<div class="stat-tile">' +
+      '<div class="stat-label">Put aside all time</div>' +
+      '<div class="stat-value">' + fmtMoney(all) + "</div>" +
+      '<div class="stat-sub">' + state.savingsContributions.length +
+      (state.savingsContributions.length === 1 ? " contribution" : " contributions") + "</div>" +
+      "</div>" +
+      '<div class="stat-tile">' +
+      '<div class="stat-label">This tax year</div>' +
+      '<div class="stat-value">' + fmtMoney(thisTaxYear) + "</div>" +
+      '<div class="stat-sub">' + esc(ty.label) + " · since 6 Apr</div>" +
+      "</div>" +
+      '<div class="stat-tile">' +
+      '<div class="stat-label">This month</div>' +
+      '<div class="stat-value ' + (thisMonth > 0 ? "positive" : "") + '">' + fmtMoney(thisMonth) + "</div>" +
+      '<div class="stat-sub">' + now.toLocaleDateString("en-GB", { month: "long" }) + "</div>" +
+      "</div>" +
+      '<div class="stat-tile">' +
+      '<div class="stat-label">Typical month</div>' +
+      '<div class="stat-value">' + fmtMoney(typical) + "</div>" +
+      '<div class="stat-sub">median of last 6 months</div>' +
+      "</div>" +
+      '<div class="stat-tile">' +
+      '<div class="stat-label">Goals on track</div>' +
+      '<div class="stat-value ' + (goals.length && onTrack === goals.length ? "positive" : "") + '">' +
+      (goals.length ? onTrack + " / " + goals.length : "—") + "</div>" +
+      '<div class="stat-sub">' + (goals.length ? "at your recent pace" : "no goals set yet") + "</div>" +
+      "</div>";
+  }
+
+  function filteredContributions() {
+    return state.savingsContributions.filter(function (c) {
+      if (savingsFilters.year !== "all" && c.date.slice(0, 4) !== savingsFilters.year) return false;
+      if (savingsFilters.month !== "all" && c.date.slice(5, 7) !== savingsFilters.month) return false;
+      if (savingsFilters.vehicle !== "all" && c.vehicle !== savingsFilters.vehicle) return false;
+      if (savingsFilters.goal === "none" && c.goalId) return false;
+      if (savingsFilters.goal !== "all" && savingsFilters.goal !== "none" && c.goalId !== savingsFilters.goal) return false;
+      return true;
+    });
+  }
+
+  function renderSavingsFilters() {
+    var years = {};
+    state.savingsContributions.forEach(function (c) { years[c.date.slice(0, 4)] = true; });
+    var yearOpts = ['<option value="all">All years</option>'].concat(
+      Object.keys(years).sort().reverse().map(function (y) {
+        return '<option value="' + esc(y) + '"' + (savingsFilters.year === y ? " selected" : "") + ">" + esc(y) + "</option>";
+      })
+    );
+    document.getElementById("savings-filter-year").innerHTML = yearOpts.join("");
+
+    var monthOpts = ['<option value="all">All months</option>'];
+    for (var m = 1; m <= 12; m++) {
+      var mm = String(m).padStart(2, "0");
+      var label = new Date(2000, m - 1, 1).toLocaleDateString("en-GB", { month: "long" });
+      monthOpts.push('<option value="' + mm + '"' + (savingsFilters.month === mm ? " selected" : "") + ">" + esc(label) + "</option>");
+    }
+    document.getElementById("savings-filter-month").innerHTML = monthOpts.join("");
+
+    var vehicleOpts = ['<option value="all">All destinations</option>'].concat(
+      SAVINGS_VEHICLES.map(function (v) {
+        return '<option value="' + esc(v.id) + '"' + (savingsFilters.vehicle === v.id ? " selected" : "") + ">" + esc(v.label) + "</option>";
+      })
+    );
+    document.getElementById("savings-filter-vehicle").innerHTML = vehicleOpts.join("");
+
+    var goalOpts = ['<option value="all">All goals</option>', '<option value="none"' + (savingsFilters.goal === "none" ? " selected" : "") + ">Not tied to a goal</option>"].concat(
+      state.savingsGoals.map(function (g) {
+        return '<option value="' + esc(g.id) + '"' + (savingsFilters.goal === g.id ? " selected" : "") + ">" + esc(g.name) + "</option>";
+      })
+    );
+    document.getElementById("savings-filter-goal").innerHTML = goalOpts.join("");
+  }
+
+  function renderSavingsLog() {
+    var el = document.getElementById("savings-log");
+    var summaryEl = document.getElementById("savings-log-summary");
+    var rows = filteredContributions().slice().sort(function (a, b) {
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1;
+    });
+
+    summaryEl.textContent = rows.length
+      ? rows.length + (rows.length === 1 ? " entry · " : " entries · ") + fmtMoney(sumAmounts(rows))
+      : "";
+
+    if (!rows.length) {
+      el.innerHTML = state.savingsContributions.length
+        ? '<p class="empty-state">Nothing matches those filters.</p>'
+        : '<p class="empty-state">Nothing put aside yet — log your first transfer above and it will show up here and in the ledger.</p>';
+      return;
+    }
+
+    // Grouped by month so "how much did I put away in March" is readable at a
+    // glance rather than something you have to add up by eye.
+    var html = "";
+    var lastMonth = null;
+    rows.forEach(function (c) {
+      var mk = c.date.slice(0, 7);
+      if (mk !== lastMonth) {
+        lastMonth = mk;
+        var monthTotal = sumAmounts(rows.filter(function (r) { return r.date.slice(0, 7) === mk; }));
+        html += '<div class="savings-month-head"><span>' + esc(monthShortLabel(mk)) + "</span>" +
+          '<span class="savings-month-total">' + fmtMoney(monthTotal) + "</span></div>";
+      }
+      var v = vehicleFor(c.vehicle);
+      var d = new Date(c.date + "T00:00:00");
+      var goal = state.savingsGoals.filter(function (g) { return g.id === c.goalId; })[0];
+      var subParts = [];
+      if (c.accountLabel) subParts.push(c.accountLabel);
+      if (c.note) subParts.push(c.note);
+      html +=
+        '<div class="savings-row">' +
+        '<div class="ledger-date">' + esc(d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })) + "</div>" +
+        '<div class="savings-main">' +
+        '<div class="savings-dest"><span class="tier-dot tier-' + esc(v.tier) + '"></span>' + esc(v.label) +
+        (goal ? ' <span class="goal-badge">' + esc(goal.name) + "</span>" : "") + "</div>" +
+        (subParts.length ? '<div class="savings-sub">' + esc(subParts.join(" · ")) + "</div>" : "") +
+        "</div>" +
+        '<div class="ledger-amount">' + fmtMoney(c.amount) + "</div>" +
+        '<button type="button" class="ledger-del savings-del" data-id="' + esc(c.id) + '">Delete</button>' +
+        "</div>";
+    });
+    el.innerHTML = html;
+
+    el.querySelectorAll(".savings-del").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.dataset.confirming === "1") {
+          deleteSavingsContribution(btn.dataset.id);
+        } else {
+          btn.dataset.confirming = "1";
+          btn.textContent = "Sure?";
+          btn.classList.add("confirming");
+          setTimeout(function () {
+            btn.dataset.confirming = "0";
+            btn.textContent = "Delete";
+            btn.classList.remove("confirming");
+          }, 2800);
+        }
+      });
+    });
+  }
+
+  function renderHoldings() {
+    var el = document.getElementById("savings-holdings");
+    if (!state.savingsContributions.length) {
+      el.innerHTML = '<p class="empty-state">Once you log a contribution, this shows how your savings are split.</p>';
+      return;
+    }
+
+    var byVehicle = {};
+    state.savingsContributions.forEach(function (c) {
+      byVehicle[c.vehicle] = (byVehicle[c.vehicle] || 0) + c.amount;
+    });
+    var rows = Object.keys(byVehicle).map(function (id) {
+      return { vehicle: vehicleFor(id), amount: byVehicle[id] };
+    }).sort(function (a, b) { return b.amount - a.amount; });
+
+    var total = sumAmounts(state.savingsContributions);
+    var max = rows[0].amount;
+
+    var byTier = {};
+    rows.forEach(function (r) { byTier[r.vehicle.tier] = (byTier[r.vehicle.tier] || 0) + r.amount; });
+    var tierSummary = ["cash", "low", "growth", "other"].filter(function (t) { return byTier[t]; }).map(function (t) {
+      return TIER_LABELS[t] + " " + Math.round((byTier[t] / total) * 100) + "%";
+    }).join(" · ");
+
+    el.innerHTML = rows.map(function (r) {
+      return (
+        '<div class="holding-row">' +
+        '<div class="holding-top">' +
+        '<div class="holding-name"><span class="tier-dot tier-' + esc(r.vehicle.tier) + '"></span><span class="label">' + esc(r.vehicle.label) + "</span></div>" +
+        '<span class="holding-amt">' + fmtMoney(r.amount) + "</span>" +
+        "</div>" +
+        '<div class="bar-track"><div class="bar-fill tier-' + esc(r.vehicle.tier) + '" style="width:' + Math.max(4, (r.amount / max) * 100) + '%"></div></div>' +
+        "</div>"
+      );
+    }).join("") + '<p class="isa-note">' + esc(tierSummary) + "</p>";
+  }
+
+  function renderIsaAllowance() {
+    var el = document.getElementById("isa-allowance");
+    var ty = taxYearRange();
+    document.getElementById("isa-year-label").textContent = ty.label;
+
+    var used = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) {
+      return vehicleFor(c.vehicle).isa;
+    }));
+    var remaining = Math.max(0, ISA_ANNUAL_ALLOWANCE - used);
+    var pct = Math.min(100, (used / ISA_ANNUAL_ALLOWANCE) * 100);
+    var daysLeft = Math.max(0, Math.ceil((ty.endDate - new Date()) / 86400000));
+
+    var note = used === 0
+      ? "Nothing sheltered in an ISA this tax year. The allowance doesn't carry over — whatever is unused on 5 April is gone."
+      : remaining === 0
+        ? "Allowance fully used for " + ty.label + "."
+        : fmtMoney(remaining) + " of allowance left, " + daysLeft + (daysLeft === 1 ? " day" : " days") + " to use it. It doesn't carry over into next year.";
+
+    el.innerHTML =
+      '<div class="isa-figures"><span class="isa-used">' + fmtMoney(used) + "</span>" +
+      '<span class="isa-of">of ' + fmtMoney(ISA_ANNUAL_ALLOWANCE) + "</span></div>" +
+      '<div class="bar-track"><div class="bar-fill tier-low" style="width:' + Math.max(2, pct) + '%"></div></div>' +
+      '<p class="isa-note">' + esc(note) + "</p>";
+  }
+
+  function renderGoals() {
+    var el = document.getElementById("goals-list");
+    var goals = state.savingsGoals.filter(function (g) { return !g.archived; }).sort(function (a, b) {
+      return a.targetDate < b.targetDate ? -1 : a.targetDate > b.targetDate ? 1 : 0;
+    });
+
+    if (!goals.length) {
+      el.innerHTML = '<p class="empty-state">No goals yet. Add one to see how much a month it needs, and whether your recent pace gets you there.</p>';
+      return;
+    }
+
+    var totalRequired = 0;
+    var html = goals.map(function (g) {
+      var p = goalProgress(g);
+      totalRequired += p.requiredMonthly;
+
+      var verdict, verdictClass;
+      if (p.complete) {
+        verdict = "Funded";
+        verdictClass = "on-track";
+      } else if (p.overdue) {
+        verdict = "Past its date, " + fmtMoney(p.remaining) + " short";
+        verdictClass = "behind";
+      } else if (p.tooNew) {
+        verdict = "Too new to judge the pace";
+        verdictClass = "";
+      } else if (p.actualMonthly >= p.requiredMonthly) {
+        verdict = "On track at your recent pace";
+        verdictClass = "on-track";
+      } else {
+        verdict = "Behind by " + fmtMoney(p.requiredMonthly - p.actualMonthly) + "/mo";
+        verdictClass = "behind";
+      }
+
+      var monthsLabel = p.overdue ? "overdue" : Math.max(0, Math.round(p.monthsLeft)) + " months left";
+      var targetLabel = new Date(g.targetDate + "T00:00:00").toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+
+      return (
+        '<div class="goal-row">' +
+        '<div class="goal-top">' +
+        '<div class="goal-name">' + esc(g.name) +
+        '<span class="goal-horizon">' + (g.horizon === "short" ? "Short term" : "Long term") + "</span></div>" +
+        '<div class="goal-amounts">' + fmtMoney(p.saved) + " / " + fmtMoney(g.targetAmount) + "</div>" +
+        "</div>" +
+        '<div class="bar-track goal-bar"><div class="bar-fill ' + (p.complete ? "tier-low" : "tier-growth") +
+        '" style="width:' + Math.max(2, p.pct) + '%"></div></div>' +
+        '<div class="goal-meta">' +
+        "<span>" + esc(targetLabel) + " · " + esc(monthsLabel) +
+        (p.complete ? "" : " · needs " + fmtMoney(p.requiredMonthly) + "/mo") + "</span>" +
+        '<span class="goal-verdict ' + verdictClass + '">' + esc(verdict) + "</span>" +
+        "</div>" +
+        '<div class="goal-actions"><button type="button" class="ledger-del goal-del" data-id="' + esc(g.id) + '">Delete goal</button></div>' +
+        "</div>"
+      );
+    }).join("");
+
+    // Goals all draw on the same leftover, so the number that decides whether
+    // the set is realistic is the combined monthly requirement — not any one
+    // goal on its own.
+    var spare = medianMonthlyLeftover(6);
+    if (totalRequired > 0 && spare != null) {
+      var fits = spare >= totalRequired;
+      html += '<p class="isa-note">All goals together need <strong>' + fmtMoney(totalRequired) +
+        "/mo</strong>. Your typical month leaves " + fmtMoney(spare) + " spare — " +
+        (fits ? "that fits." : "about " + fmtMoney(totalRequired - spare) + " a month short, so something has to give: a longer deadline, a smaller target, or less spending.") +
+        "</p>";
+    }
+
+    el.innerHTML = html;
+
+    el.querySelectorAll(".goal-del").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.dataset.confirming === "1") {
+          deleteSavingsGoal(btn.dataset.id);
+        } else {
+          btn.dataset.confirming = "1";
+          btn.textContent = "Sure? Contributions are kept";
+          btn.classList.add("confirming");
+          setTimeout(function () {
+            btn.dataset.confirming = "0";
+            btn.textContent = "Delete goal";
+            btn.classList.remove("confirming");
+          }, 3200);
+        }
+      });
+    });
+  }
+
+  // ---------- savings: where you could cut ----------
+
+  // How much of a category a suggestion assumes you'd actually give up. A
+  // quarter is deliberately modest — the point is a number you might really
+  // hit, not the fantasy one you get by assuming eating out drops to zero.
+  var TRIM_FRACTION = 0.25;
+  var SUBSCRIPTION_REVIEW_MAX = 20;
+
+  function cutCandidates() {
+    var now = new Date();
+    var freqFrom = todayStr(new Date(now.getFullYear(), now.getMonth() - 3, 1));
+    var freqTo = todayStr(new Date(now.getFullYear(), now.getMonth(), 1));
+
+    return CATEGORIES.filter(function (c) { return c.discretionary; }).map(function (cat) {
+      var totals = categoryMonthlyTotals(cat.id, 6);
+      // Median rather than mean: one Christmas or one holiday shouldn't become
+      // the baseline you're told to cut from.
+      var base = median(totals);
+      var last = totals[totals.length - 1];
+      var recent = state.transactions.filter(function (t) {
+        return t.categoryId === cat.id && t.date >= freqFrom && t.date < freqTo;
+      });
+      return {
+        cat: cat,
+        base: base,
+        last: last,
+        perMonth: recent.length / 3,
+        avgAmount: recent.length ? recent.reduce(function (s, t) { return s + t.amount; }, 0) / recent.length : 0,
+        trim: base * TRIM_FRACTION,
+        overshoot: base > 0 && last > base * 1.15 && last - base >= 20 ? last - base : 0
+      };
+    // Anything whose realistic trim is under a fiver a month isn't worth the
+    // reader's attention — it just crowds out the suggestions that matter.
+    }).filter(function (r) { return r.trim >= 5; }).sort(function (a, b) { return b.base - a.base; });
+  }
+
+  function renderCutAnalysis() {
+    var el = document.getElementById("savings-cuts");
+    var headEl = document.getElementById("cut-headline");
+    var rows = cutCandidates();
+
+    if (!rows.length) {
+      headEl.textContent = "";
+      el.innerHTML = '<p class="empty-state">Once there are a few complete months of expenses logged, this works out where there is realistically room to trim.</p>';
+      return;
+    }
+
+    var top = rows.slice(0, 3);
+    var freed = top.reduce(function (s, r) { return s + r.trim; }, 0);
+    headEl.textContent = "~" + fmtMoney(freed) + "/mo";
+
+    var cards = top.map(function (r) {
+      var bits = ["<strong>" + esc(r.cat.label) + "</strong> runs " + fmtMoney(r.base) + " in a typical month"];
+      if (r.perMonth >= 1) {
+        bits.push("about " + Math.round(r.perMonth) + " charges a month averaging " + fmtMoney(r.avgAmount));
+      }
+      var card = bits.join(", ") + ". Trimming a quarter frees <strong>" + fmtMoney(r.trim) +
+        "/mo</strong> — " + fmtMoney(r.trim * 12) + " a year.";
+      if (r.overshoot) card += " Last month ran " + fmtMoney(r.overshoot) + " above your usual.";
+      return card;
+    });
+
+    var small = state.recurringExpenses.filter(function (rec) {
+      return rec.active && !rec.installment && rec.amount <= SUBSCRIPTION_REVIEW_MAX;
+    });
+    if (small.length >= 2) {
+      var smallTotal = small.reduce(function (s, r) { return s + r.amount; }, 0);
+      cards.push("<strong>" + small.length + " standing payments</strong> of " + fmtMoney(SUBSCRIPTION_REVIEW_MAX) +
+        " or less go out every month, " + fmtMoney(smallTotal) + "/mo between them (" + fmtMoney(smallTotal * 12) +
+        " a year). Small enough not to notice, worth checking you still use them all.");
+    }
+
+    var plannedTotal = state.plannedExpenses.reduce(function (s, p) { return s + p.amount; }, 0);
+    var spare = medianMonthlyLeftover(6);
+    if (plannedTotal > 0 && spare != null && spare > 0 && plannedTotal > spare) {
+      cards.push("Your planned purchases come to " + fmtMoney(plannedTotal) + " — about " +
+        Math.ceil(plannedTotal / spare) + " months of everything you typically have spare. Worth deciding which of them actually happen before committing that money to savings.");
+    }
+
+    el.innerHTML = cards.map(function (c) { return '<div class="insight-card">' + c + "</div>"; }).join("");
+  }
+
+  // ---------- savings: where it could go ----------
+
+  // Deliberately ordered as a set of gates, not a menu. Debt and a cash buffer
+  // come before any allocation advice at all, because no plausible investment
+  // return beats clearing expensive credit, and investing money you'll need at
+  // short notice is how a market dip turns into a forced sale.
+  function renderAllocationAdvice() {
+    var el = document.getElementById("savings-allocation");
+    var cards = [];
+    var essential = medianEssentialMonthly();
+
+    if (essential <= 0) {
+      el.innerHTML = '<div class="insight-card">Log a couple of complete months of expenses and this will work out your emergency-fund target and where new savings could sensibly go.</div>';
+      return;
+    }
+
+    var today = todayStr();
+    var overdue = state.cardBalances.filter(function (b) { return !b.paid && b.dueDate < today; });
+    if (overdue.length) {
+      var overdueTotal = sumAmounts(overdue);
+      cards.push("<strong>Clear the " + fmtMoney(overdueTotal) + " overdue on your cards first.</strong> " +
+        "Card interest runs far above anything a savings account or a fund is likely to return, so paying it off is the highest guaranteed return available to you right now.");
+    }
+
+    var installs = state.recurringExpenses.filter(function (r) { return r.active && r.installment; });
+    if (installs.length) {
+      var owed = installs.reduce(function (s, r) { return s + (installmentRemaining(r) || 0); }, 0);
+      if (owed > 0) {
+        cards.push("You still owe <strong>" + fmtMoney(owed) + "</strong> across " + installs.length +
+          (installs.length === 1 ? " finance agreement" : " finance agreements") +
+          ". If any of it charges more than about 8&ndash;10% a year, overpaying it beats investing the same money.");
+      }
+    }
+
+    // The buffer has to be money you can actually reach this week — cash and
+    // capital-preservation holdings only. A stocks ISA is not an emergency fund.
+    var buffer = sumAmounts(state.savingsContributions.filter(function (c) {
+      var tier = vehicleFor(c.vehicle).tier;
+      return tier === "cash" || tier === "low";
+    }));
+    var bufferMin = essential * 3;
+    var bufferMax = essential * 6;
+    var bufferReady = buffer >= bufferMin;
+
+    if (!bufferReady) {
+      var pace = medianMonthlySavings();
+      var short = bufferMin - buffer;
+      var paceLine = pace > 0
+        ? " At your recent " + fmtMoney(pace) + "/mo that takes about " + Math.ceil(short / pace) + " months."
+        : "";
+      cards.push("<strong>Fill the buffer before investing anything.</strong> Your essentials run " +
+        fmtMoney(essential) + "/mo, so three months is " + fmtMoney(bufferMin) + " and six is " + fmtMoney(bufferMax) +
+        ". You have " + fmtMoney(buffer) + " reachable — " + fmtMoney(short) + " short of the three-month mark." + paceLine +
+        " Keep this part in easy-access cash or a cash ISA, not in anything that can fall in value.");
+    } else {
+      cards.push("<strong>Your buffer is covered</strong> — " + fmtMoney(buffer) + " reachable against essentials of " +
+        fmtMoney(essential) + "/mo (" + (buffer / essential).toFixed(1) + " months). " +
+        (buffer > bufferMax
+          ? "That is past the six-month mark, so roughly " + fmtMoney(buffer - bufferMax) + " of it is sitting in cash doing less than it could."
+          : "New money beyond this can start taking some risk."));
+    }
+
+    var goals = state.savingsGoals.filter(function (g) { return !g.archived; }).map(function (g) {
+      var p = goalProgress(g);
+      return { goal: g, p: p };
+    }).filter(function (x) { return !x.p.complete; });
+
+    // Horizon buckets, decided by the deadline rather than the label alone —
+    // a goal you called "long term" but dated 18 months out is short-term
+    // money whatever it's named, and the market doesn't care what you called it.
+    var nearTerm = goals.filter(function (x) { return x.p.monthsLeft <= 24 || x.goal.horizon === "short"; });
+    var midTerm = goals.filter(function (x) {
+      return x.goal.horizon !== "short" && x.p.monthsLeft > 24 && x.p.monthsLeft <= 60;
+    });
+    var longTerm = goals.filter(function (x) { return x.p.monthsLeft > 60 && x.goal.horizon === "long"; });
+
+    function goalNames(list) { return list.map(function (x) { return x.goal.name; }).join(", "); }
+    function needOf(list) { return list.reduce(function (s, x) { return s + x.p.requiredMonthly; }, 0); }
+
+    if (nearTerm.length) {
+      cards.push("<strong>Average return, low risk</strong> — for the " + fmtMoney(needOf(nearTerm)) + "/mo going towards " +
+        esc(goalNames(nearTerm)) +
+        ". Needed inside two years, so it can't afford to fall: a cash ISA, an easy-access or fixed-rate savings account, or premium bonds. Tax-free interest inside an ISA is the whole edge here.");
+    }
+
+    if (bufferReady && midTerm.length) {
+      cards.push("<strong>A mix, for the awkward middle</strong> — the " + fmtMoney(needOf(midTerm)) + "/mo going towards " +
+        esc(goalNames(midTerm)) +
+        " is two to five years out. Too far for cash alone to be the obvious answer, too close to ride out a bad run in full. The usual shape is a split: the part you'd hate to lose in cash, the rest taking market risk.");
+    }
+
+    if (bufferReady && longTerm.length) {
+      cards.push("<strong>High return, high risk</strong> — for the " + fmtMoney(needOf(longTerm)) + "/mo going towards " +
+        esc(goalNames(longTerm)) +
+        ". Five years or more away, which is long enough to sit through a fall: a stocks &amp; shares ISA holding broad, low-cost index funds is the usual shape. Expect it to drop sharply at some point — money you'd panic about doesn't belong here.");
+    }
+
+    if (!goals.length) {
+      cards.push("<strong>No goals set yet.</strong> Add one with a target and a deadline and this will split your contributions by how far off the money is needed — which is the single thing that decides how much risk it can take.");
+    }
+
+    // Worth saying plainly rather than inventing a category to fill.
+    cards.push("<strong>High return, low risk doesn't exist as an investment.</strong> " +
+      "Anything paying well above cash is paying you for taking risk. The genuine exceptions are structural, not market-based: an employer pension match (an instant return on the matched part, before markets do anything), " +
+      "the tax saved by using an ISA or pension wrapper at all, and clearing debt that charges more than a safe account pays.");
+
+    var ty = taxYearRange();
+    var isaUsed = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) { return vehicleFor(c.vehicle).isa; }));
+    var outsideIsa = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) {
+      var v = vehicleFor(c.vehicle);
+      return !v.isa && (v.tier === "growth" || v.tier === "cash");
+    }));
+    if (outsideIsa > 0 && isaUsed < ISA_ANNUAL_ALLOWANCE) {
+      cards.push("You've put " + fmtMoney(outsideIsa) + " outside an ISA this tax year with " +
+        fmtMoney(ISA_ANNUAL_ALLOWANCE - isaUsed) + " of allowance still unused. Same money, same investments, less tax on the interest and gains — and the unused allowance disappears on 5 April.");
+    }
+
+    el.innerHTML = cards.map(function (c) { return '<div class="insight-card">' + c + "</div>"; }).join("");
+  }
+
+  // Rebuilt whenever goals change, so a newly added goal is immediately
+  // selectable — the current selections are carried across so a re-render
+  // triggered mid-entry doesn't quietly reset a half-filled form.
+  function renderSavingsFormSelects() {
+    var vehicleEl = document.getElementById("s-vehicle");
+    var keptVehicle = vehicleEl.value;
+    vehicleEl.innerHTML = SAVINGS_VEHICLES.map(function (v) {
+      return '<option value="' + esc(v.id) + '">' + esc(v.label) + "</option>";
+    }).join("");
+    vehicleEl.value = keptVehicle || "savings_account";
+
+    var goalEl = document.getElementById("s-goal");
+    var keptGoal = goalEl.value;
+    goalEl.innerHTML = '<option value="">No specific goal</option>' +
+      state.savingsGoals.filter(function (g) { return !g.archived; }).map(function (g) {
+        return '<option value="' + esc(g.id) + '">' + esc(g.name) + "</option>";
+      }).join("");
+    goalEl.value = keptGoal;
+  }
+
+  function renderSavingsView() {
+    renderSavingsStats();
+    renderSavingsFilters();
+    renderSavingsLog();
+    renderHoldings();
+    renderIsaAllowance();
+    renderSavingsFormSelects();
+    renderGoals();
+    renderCutAnalysis();
+    renderAllocationAdvice();
+  }
+
   function renderAll() {
     renderMonthLabel();
     renderCardReminders();
@@ -1204,6 +1956,23 @@
     renderCalendarPanel();
     renderPlanned();
     renderRecurringPanel();
+    if (currentView === "savings") renderSavingsView();
+  }
+
+  // The app is a single page with one section visible at a time rather than a
+  // router — same shape as the existing panel toggles, no URL handling needed.
+  // The pay-period nav belongs to Home only; Savings has its own filters and a
+  // period arrow there would just be confusing.
+  function showView(name) {
+    currentView = name;
+    document.getElementById("view-home").hidden = name !== "home";
+    document.getElementById("view-savings").hidden = name !== "savings";
+    document.querySelector(".month-nav").hidden = name !== "home";
+    document.getElementById("range-form").hidden = true;
+    document.getElementById("nav-home").classList.toggle("active", name === "home");
+    document.getElementById("nav-savings").classList.toggle("active", name === "savings");
+    closeSideNav();
+    renderAll();
   }
 
   // ---------- persistence (Supabase) ----------
@@ -1295,6 +2064,32 @@
     };
   }
 
+  function rowToContribution(r) {
+    return {
+      id: r.id, transactionId: r.transaction_id || null, amount: Number(r.amount), date: r.date,
+      vehicle: r.vehicle, accountLabel: r.account_label || "", goalId: r.goal_id || null, note: r.note || ""
+    };
+  }
+  function contributionToRow(c) {
+    return {
+      id: c.id, user_id: currentUserId, transaction_id: c.transactionId || null, amount: c.amount, date: c.date,
+      vehicle: c.vehicle, account_label: c.accountLabel || "", goal_id: c.goalId || null, note: c.note || ""
+    };
+  }
+
+  function rowToGoal(r) {
+    return {
+      id: r.id, name: r.name, targetAmount: Number(r.target_amount), horizon: r.horizon,
+      startDate: r.start_date, targetDate: r.target_date, archived: !!r.archived
+    };
+  }
+  function goalToRow(g) {
+    return {
+      id: g.id, user_id: currentUserId, name: g.name, target_amount: g.targetAmount, horizon: g.horizon,
+      start_date: g.startDate, target_date: g.targetDate, archived: g.archived
+    };
+  }
+
   async function loadAll() {
     var results = await Promise.all([
       sb.from("settings").select("*").maybeSingle(),
@@ -1303,7 +2098,9 @@
       sb.from("transactions").select("*"),
       sb.from("planned_expenses").select("*"),
       sb.from("card_balances").select("*"),
-      sb.from("recurring_expenses").select("*")
+      sb.from("recurring_expenses").select("*"),
+      sb.from("savings_contributions").select("*"),
+      sb.from("savings_goals").select("*")
     ]);
 
     var firstError = results.map(function (r) { return r.error; }).filter(Boolean)[0];
@@ -1318,7 +2115,9 @@
       transactions: (results[3].data || []).map(rowToTx),
       plannedExpenses: (results[4].data || []).map(rowToPlanned),
       cardBalances: (results[5].data || []).map(rowToBalance),
-      recurringExpenses: (results[6].data || []).map(rowToRecurring)
+      recurringExpenses: (results[6].data || []).map(rowToRecurring),
+      savingsContributions: (results[7].data || []).map(rowToContribution),
+      savingsGoals: (results[8].data || []).map(rowToGoal)
     };
   }
 
@@ -1332,10 +2131,68 @@
     dbCall(sb.from("transactions").insert(txToRow(t)));
   }
 
+  // Deleting the ledger row for a savings transfer removes the contribution
+  // too — the database does it via `on delete cascade`, this keeps the local
+  // copy in step so the savings totals don't stay wrong until the next reload.
   function deleteTransaction(id) {
     state.transactions = state.transactions.filter(function (t) { return t.id !== id; });
+    state.savingsContributions = state.savingsContributions.filter(function (c) { return c.transactionId !== id; });
     renderAll();
     dbCall(sb.from("transactions").delete().eq("id", id));
+  }
+
+  // ---------- savings writes ----------
+
+  // One user action, two rows: the ledger transaction that makes the money
+  // leave "left over", and the contribution that records where it went. They
+  // are inserted together and the transaction goes first, because the
+  // contribution's transaction_id points at it.
+  function addSavingsContribution(data) {
+    var t = {
+      id: genId(), amount: data.amount, date: data.date, categoryId: SAVINGS_CAT,
+      note: data.note || vehicleFor(data.vehicle).label,
+      recurringId: null, recurringOccurrence: null, paymentMethod: data.source || ""
+    };
+    var c = {
+      id: genId(), transactionId: t.id, amount: data.amount, date: data.date, vehicle: data.vehicle,
+      accountLabel: data.accountLabel || "", goalId: data.goalId || null, note: data.note || ""
+    };
+    state.transactions.push(t);
+    state.savingsContributions.push(c);
+    renderAll();
+    dbCall(sb.from("transactions").insert(txToRow(t)).then(function (res) {
+      if (res && res.error) return res;
+      return sb.from("savings_contributions").insert(contributionToRow(c));
+    }));
+  }
+
+  function deleteSavingsContribution(id) {
+    var c = state.savingsContributions.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    state.savingsContributions = state.savingsContributions.filter(function (x) { return x.id !== id; });
+    var ops = [sb.from("savings_contributions").delete().eq("id", id)];
+    if (c.transactionId) {
+      state.transactions = state.transactions.filter(function (t) { return t.id !== c.transactionId; });
+      ops.push(sb.from("transactions").delete().eq("id", c.transactionId));
+    }
+    renderAll();
+    dbCall(Promise.all(ops));
+  }
+
+  function addSavingsGoal(g) {
+    state.savingsGoals.push(g);
+    renderAll();
+    dbCall(sb.from("savings_goals").insert(goalToRow(g)));
+  }
+
+  // Contributions already logged against a deleted goal keep their money in
+  // the savings total — only the link goes (the FK is `on delete set null`),
+  // so removing a goal never quietly loses a record of cash you actually moved.
+  function deleteSavingsGoal(id) {
+    state.savingsGoals = state.savingsGoals.filter(function (g) { return g.id !== id; });
+    state.savingsContributions.forEach(function (c) { if (c.goalId === id) c.goalId = null; });
+    renderAll();
+    dbCall(sb.from("savings_goals").delete().eq("id", id));
   }
 
   function markPlannedBought(id) {
@@ -1391,6 +2248,72 @@
       renderAll();
       dbCall(sb.from("planned_expenses").insert(plannedToRow(p)));
       document.getElementById("planned-form").reset();
+    });
+  }
+
+  function wireSavingsForm() {
+    document.getElementById("s-date").value = todayStr();
+    document.getElementById("savings-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var amount = parseFloat(document.getElementById("s-amount").value);
+      var vehicle = document.getElementById("s-vehicle").value;
+      if (!isFinite(amount) || amount <= 0 || !vehicle) return;
+      addSavingsContribution({
+        amount: Math.round(amount * 100) / 100,
+        date: document.getElementById("s-date").value || todayStr(),
+        vehicle: vehicle,
+        accountLabel: document.getElementById("s-account").value.trim().slice(0, 40),
+        goalId: document.getElementById("s-goal").value || null,
+        source: document.getElementById("s-source").value.trim().slice(0, 40),
+        note: document.getElementById("s-note").value.trim().slice(0, 80)
+      });
+      document.getElementById("s-amount").value = "";
+      document.getElementById("s-note").value = "";
+      document.getElementById("s-date").value = todayStr();
+      document.getElementById("s-amount").focus();
+    });
+  }
+
+  function wireGoalForm() {
+    var form = document.getElementById("goal-form");
+    document.getElementById("goal-form-toggle").addEventListener("click", function () {
+      showingGoalForm = !showingGoalForm;
+      form.hidden = !showingGoalForm;
+      document.getElementById("goal-form-toggle").textContent = showingGoalForm ? "Cancel" : "+ Add a goal";
+      if (showingGoalForm) document.getElementById("g-name").focus();
+    });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var name = document.getElementById("g-name").value.trim().slice(0, 60);
+      var target = parseFloat(document.getElementById("g-target").value);
+      var months = parseInt(document.getElementById("g-months").value, 10);
+      var horizon = document.getElementById("g-horizon").value;
+      if (!name || !isFinite(target) || target <= 0 || !isFinite(months) || months <= 0) return;
+
+      // The duration is what you enter; the deadline is what gets stored, so
+      // "am I on pace" stays a plain date comparison later on.
+      var start = new Date();
+      var targetDate = new Date(start.getFullYear(), start.getMonth() + months, start.getDate());
+      addSavingsGoal({
+        id: genId(), name: name, targetAmount: Math.round(target * 100) / 100, horizon: horizon,
+        startDate: todayStr(start), targetDate: todayStr(targetDate), archived: false
+      });
+
+      form.reset();
+      form.hidden = true;
+      showingGoalForm = false;
+      document.getElementById("goal-form-toggle").textContent = "+ Add a goal";
+    });
+  }
+
+  function wireSavingsFilters() {
+    [["savings-filter-year", "year"], ["savings-filter-month", "month"],
+     ["savings-filter-vehicle", "vehicle"], ["savings-filter-goal", "goal"]].forEach(function (pair) {
+      document.getElementById(pair[0]).addEventListener("change", function (e) {
+        savingsFilters[pair[1]] = e.target.value;
+        renderSavingsLog();
+      });
     });
   }
 
@@ -1651,7 +2574,7 @@
     viewMonth = currentPeriodKey();
     var generated = generateRecurringTransactions();
     if (generated.length) dbCall(sb.from("transactions").insert(generated.map(txToRow)));
-    renderAll();
+    showView("home");
     document.getElementById("app").hidden = false;
   }
 
@@ -1784,7 +2707,8 @@
     document.getElementById("nav-toggle").addEventListener("click", openSideNav);
     document.getElementById("nav-close").addEventListener("click", closeSideNav);
     document.getElementById("nav-overlay").addEventListener("click", closeSideNav);
-    document.getElementById("nav-home").addEventListener("click", closeSideNav);
+    document.getElementById("nav-home").addEventListener("click", function () { showView("home"); });
+    document.getElementById("nav-savings").addEventListener("click", function () { showView("savings"); });
     document.getElementById("nav-profile").addEventListener("click", openProfileModal);
     document.getElementById("profile-close").addEventListener("click", closeProfileModal);
     document.getElementById("profile-overlay").addEventListener("click", closeProfileModal);
@@ -1802,6 +2726,9 @@
     populateCategorySelect("rec-category");
     wireForm();
     wirePlannedForm();
+    wireSavingsForm();
+    wireGoalForm();
+    wireSavingsFilters();
     wireCalendarEdit();
     wireRecurringEdit();
     wireRecurringAddForm();

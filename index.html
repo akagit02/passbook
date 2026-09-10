@@ -244,7 +244,8 @@
     grid-template-columns: repeat(2, 1fr);
     gap: 12px;
   }
-  @media (min-width: 640px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 640px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 1000px) { .stats { grid-template-columns: repeat(5, 1fr); } }
 
   .stat-tile {
     background: var(--paper-raised);
@@ -328,7 +329,10 @@
     .quick-add { grid-template-columns: repeat(4, 1fr); align-items: end; }
     .quick-add .field-wide { grid-column: span 2; }
   }
-  .field { display: flex; flex-direction: column; gap: 5px; }
+  /* min-width:0 matters here: grid items default to min-width:auto, and a
+     date input reports an intrinsic width wider than a phone-width column,
+     which pushes the whole form (and the page) into sideways scrolling. */
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .field label { font-size: 0.76rem; color: var(--ink-soft); }
   .field .opt { color: var(--ink-faint); font-weight: 400; }
   .field input, .field select {
@@ -338,6 +342,8 @@
     background: var(--paper);
     color: var(--ink);
     min-height: 40px;
+    min-width: 0;
+    width: 100%;
   }
   .amount-input {
     display: flex;
@@ -604,6 +610,103 @@
   .tip-text strong { color: var(--ink); font-weight: 600; }
   .tips-disclaimer { font-size: 0.74rem; color: var(--ink-faint); border-top: 1px solid var(--line); padding-top: 10px; }
 
+  /* views (Home / Savings) — only one is ever visible at a time */
+  .view { display: flex; flex-direction: column; gap: 22px; }
+  .view[hidden] { display: none; }
+  .side-nav-item.active { background: var(--brass-tint); color: var(--brass-deep); font-weight: 600; }
+
+  /* savings */
+  .savings-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: -4px 0 12px; }
+  .savings-log { display: flex; flex-direction: column; }
+  .savings-month-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding: 12px 2px 6px;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+  .savings-month-head:first-child { padding-top: 2px; }
+  .savings-month-total { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+  .savings-row {
+    display: grid;
+    grid-template-columns: 3.4em 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--line);
+  }
+  .savings-row:last-child { border-bottom: none; }
+  .savings-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .savings-dest { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; flex-wrap: wrap; }
+  .savings-sub { font-size: 0.8rem; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tier-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .tier-cash { background: var(--cat-3); }
+  .tier-low { background: var(--cat-2); }
+  .tier-growth { background: var(--cat-5); }
+  .tier-other { background: var(--cat-9); }
+  .goal-badge {
+    font-size: 0.68rem;
+    color: var(--brass-deep);
+    background: var(--brass-tint);
+    border: 1px solid var(--brass);
+    border-radius: 5px;
+    padding: 1px 6px;
+    flex: none;
+  }
+
+  /* holdings + ISA meter */
+  .holding-row { padding: 8px 0; }
+  .holding-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 5px;
+  }
+  .holding-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .holding-name span.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .holding-amt { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .isa-figures {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .isa-used { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 500; }
+  .isa-of { font-size: 0.78rem; color: var(--ink-faint); }
+  .isa-note { font-size: 0.78rem; color: var(--ink-soft); margin-top: 8px; line-height: 1.45; }
+
+  /* goals */
+  .goals-list { display: flex; flex-direction: column; gap: 16px; }
+  .goal-row { border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+  .goal-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .goal-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .goal-name { font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .goal-horizon {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-weight: 500;
+  }
+  .goal-amounts { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.85rem; white-space: nowrap; }
+  .goal-bar { margin: 8px 0 6px; }
+  .goal-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink-soft); }
+  .goal-verdict { font-weight: 500; }
+  .goal-verdict.on-track { color: var(--positive); }
+  .goal-verdict.behind { color: var(--negative); }
+  .goal-actions { display: flex; gap: 6px; margin-top: 8px; }
+
   .app-footer { text-align: center; color: var(--ink-faint); font-size: 0.75rem; padding-top: 8px; }
 
   /* auth screen */
@@ -798,6 +901,7 @@
     <button type="button" id="nav-close" class="nav-close" aria-label="Close menu">✕</button>
   </div>
   <button type="button" class="side-nav-item" id="nav-home">🏠 Home</button>
+  <button type="button" class="side-nav-item" id="nav-savings">🏦 Savings</button>
   <button type="button" class="side-nav-item" id="nav-profile">👤 Profile</button>
 </nav>
 
@@ -851,6 +955,8 @@
   <div id="sync-banner" class="sync-banner" hidden></div>
 
   <div id="card-reminder-banner" class="card-reminder-banner" hidden></div>
+
+  <div id="view-home" class="view">
 
   <section class="stats" id="stats" aria-label="Monthly summary"></section>
 
@@ -1039,6 +1145,132 @@
       <textarea id="export-textarea" readonly spellcheck="false" style="width:100%;min-height:220px;margin-top:10px;font-family:var(--font-mono);font-size:0.72rem;line-height:1.4;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper);color:var(--ink);resize:vertical;"></textarea>
     </div>
   </details>
+
+  </div><!-- /view-home -->
+
+  <div id="view-savings" class="view" hidden>
+
+    <section class="stats" id="savings-stats" aria-label="Savings summary"></section>
+
+    <section class="quick-add-wrap">
+      <form id="savings-form" class="quick-add" autocomplete="off">
+        <h2>Put money aside</h2>
+        <div class="field">
+          <label for="s-amount">Amount</label>
+          <div class="amount-input">
+            <span class="currency-prefix">£</span>
+            <input id="s-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="s-date">Date</label>
+          <input id="s-date" type="date" required />
+        </div>
+        <div class="field">
+          <label for="s-vehicle">Where it went</label>
+          <select id="s-vehicle" required></select>
+        </div>
+        <div class="field">
+          <label for="s-account">Account name <span class="opt">(optional)</span></label>
+          <input id="s-account" type="text" maxlength="40" placeholder="e.g. Monzo pot" />
+        </div>
+        <div class="field">
+          <label for="s-goal">Towards goal <span class="opt">(optional)</span></label>
+          <select id="s-goal"></select>
+        </div>
+        <div class="field">
+          <label for="s-source">Paid from <span class="opt">(optional)</span></label>
+          <input id="s-source" type="text" list="payment-method-options" placeholder="Search…" maxlength="40" autocomplete="off" />
+        </div>
+        <div class="field field-wide">
+          <label for="s-note">Note <span class="opt">(optional)</span></label>
+          <input id="s-note" type="text" maxlength="80" placeholder="e.g. monthly transfer" />
+        </div>
+        <button type="submit" class="btn-primary">Log savings</button>
+      </form>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="col-main">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Contributions</h2>
+            <span class="panel-sub" id="savings-log-summary"></span>
+          </div>
+          <div class="savings-filters">
+            <select class="panel-select" id="savings-filter-year" aria-label="Filter by year"></select>
+            <select class="panel-select" id="savings-filter-month" aria-label="Filter by month"></select>
+            <select class="panel-select" id="savings-filter-vehicle" aria-label="Filter by destination"></select>
+            <select class="panel-select" id="savings-filter-goal" aria-label="Filter by goal"></select>
+          </div>
+          <div id="savings-log" class="savings-log"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Goals</h2>
+            <button type="button" class="link-btn" id="goal-form-toggle">+ Add a goal</button>
+          </div>
+          <form id="goal-form" class="quick-add" autocomplete="off" hidden style="box-shadow:none;border:1px solid var(--line);padding:14px;margin-bottom:14px;">
+            <div class="field field-wide">
+              <label for="g-name">Goal</label>
+              <input id="g-name" type="text" placeholder="e.g. House deposit" maxlength="60" required />
+            </div>
+            <div class="field">
+              <label for="g-target">Target amount</label>
+              <div class="amount-input">
+                <span class="currency-prefix">£</span>
+                <input id="g-target" type="number" inputmode="decimal" step="0.01" min="1" placeholder="0.00" required />
+              </div>
+            </div>
+            <div class="field">
+              <label for="g-months">Within</label>
+              <div class="amount-input">
+                <input id="g-months" type="number" inputmode="numeric" min="1" max="600" placeholder="36" required />
+                <span class="currency-prefix">months</span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="g-horizon">Horizon</label>
+              <select id="g-horizon" required>
+                <option value="short">Short term</option>
+                <option value="long" selected>Long term</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-secondary">Add goal</button>
+          </form>
+          <div id="goals-list" class="goals-list"></div>
+        </div>
+      </div>
+
+      <aside class="col-side">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>ISA allowance</h2>
+            <span class="panel-sub" id="isa-year-label"></span>
+          </div>
+          <div id="isa-allowance"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h2>Where it's held</h2></div>
+          <div id="savings-holdings"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Where you could cut</h2>
+            <span class="panel-sub" id="cut-headline"></span>
+          </div>
+          <div id="savings-cuts" class="insights"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h2>Where it could go</h2></div>
+          <div id="savings-allocation" class="insights"></div>
+          <p class="tips-disclaimer" style="margin-top:12px;">This is arithmetic on your own ledger, not personalised financial advice. It names types of account and asset class only — never a product or provider. For decisions specific to your situation, a regulated financial adviser can weigh your full picture.</p>
+        </div>
+      </aside>
+    </section>
+
+  </div><!-- /view-savings -->
 
   <footer class="app-footer">
     <p>Private to your household</p>
