@@ -190,3 +190,16 @@ create policy "own rows only" on savings_goals for all using (auth.uid() = user_
 
 drop policy if exists "own rows only" on savings_contributions;
 create policy "own rows only" on savings_contributions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ── table-level grants for the two new tables ──
+-- RLS policies above control *which rows* a role can touch, but Postgres
+-- separately requires baseline table privileges before RLS is even
+-- evaluated — without this, every query against these two tables is
+-- rejected with "permission denied for table ..." regardless of RLS,
+-- for every signed-in user, not just rows they don't own. The original
+-- seven tables already carry this (however this project was first
+-- provisioned); these two are new, so it's made explicit here. RLS still
+-- fully restricts anon/authenticated to their own rows — this grant only
+-- clears the table-level gate.
+grant select, insert, update, delete on savings_goals to anon, authenticated;
+grant select, insert, update, delete on savings_contributions to anon, authenticated;
