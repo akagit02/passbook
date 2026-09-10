@@ -70,6 +70,8 @@
   var ledgerExpanded = false;
   var plannedExpanded = false;
   var recurringListExpanded = false;
+  var breakdownExpanded = false;
+  var patternsExpanded = false;
 
   function todayStr(d) {
     d = d || new Date();
@@ -581,7 +583,7 @@
     }
 
     var max = rows[0].amount;
-    el.innerHTML = rows.map(function (r) {
+    var rowsHtml = rows.map(function (r) {
       var cat = CATEGORIES[CAT_INDEX[r.catId]];
       var idx = CAT_INDEX[r.catId] + 1;
       var prev = prevSums[r.catId] || 0;
@@ -598,6 +600,17 @@
         "</div>"
       );
     }).join("");
+
+    el.innerHTML =
+      '<button type="button" class="list-toggle-btn list-toggle-btn-top" id="breakdown-toggle">' +
+      (breakdownExpanded ? "Hide" : "Show") + " " + rows.length + (rows.length === 1 ? " category" : " categories") +
+      "</button>" +
+      '<div class="breakdown-rows"' + (breakdownExpanded ? "" : " hidden") + ">" + rowsHtml + "</div>";
+
+    document.getElementById("breakdown-toggle").addEventListener("click", function () {
+      breakdownExpanded = !breakdownExpanded;
+      renderBreakdown();
+    });
   }
 
   function windowLabel(sel) {
@@ -619,7 +632,7 @@
     }
 
     var max = rows[0].count;
-    el.innerHTML = rows.map(function (r) {
+    var rowsHtml = rows.map(function (r) {
       var cat = CATEGORIES[CAT_INDEX[r.catId]] || CATEGORIES[CATEGORIES.length - 1];
       var idx = CAT_INDEX[r.catId] + 1;
 
@@ -645,6 +658,17 @@
         "</div>"
       );
     }).join("");
+
+    el.innerHTML =
+      '<button type="button" class="list-toggle-btn list-toggle-btn-top" id="patterns-toggle">' +
+      (patternsExpanded ? "Hide" : "Show") + " " + rows.length + (rows.length === 1 ? " category" : " categories") +
+      "</button>" +
+      '<div class="patterns-rows"' + (patternsExpanded ? "" : " hidden") + ">" + rowsHtml + "</div>";
+
+    document.getElementById("patterns-toggle").addEventListener("click", function () {
+      patternsExpanded = !patternsExpanded;
+      renderPatterns();
+    });
   }
 
   function renderInsights() {
