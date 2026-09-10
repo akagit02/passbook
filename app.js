@@ -28,6 +28,25 @@
   // this list just needs to match what's in that datalist.
   var PAYMENT_METHODS = ["PCC", "RCC", "sal acc", "wife sal acc", "cur acc"];
 
+  // "PCC" (Premium credit card) and "RCC" (Regular credit card) are the two
+  // "paid using" values that actually mean a credit card was used, rather
+  // than money leaving a bank account straight away — everything else in
+  // PAYMENT_METHODS is a cash-equivalent account. This maps those two
+  // shorthands to the matching row in credit_cards (matched by id first,
+  // falling back to the label so a renamed/re-seeded card still resolves)
+  // without needing a schema change to store the link explicitly.
+  var CARD_ALIASES = { PCC: { id: "premium", label: /premium/i }, RCC: { id: "regular", label: /regular/i } };
+
+  function cardForPaymentMethod(pm) {
+    var alias = CARD_ALIASES[pm];
+    if (!alias) return null;
+    var byId = state.creditCards.filter(function (c) { return c.id === alias.id; })[0];
+    if (byId) return byId;
+    return state.creditCards.filter(function (c) { return alias.label.test(c.label); })[0] || null;
+  }
+
+  function isCardTransaction(t) { return !!cardForPaymentMethod(t.paymentMethod); }
+
   var editingIncome = false;
   var editingCalendar = false;
   var editingRecurring = false;
@@ -163,8 +182,28 @@
     return out;
   }
 
-  function totalOutstandingCardBalance() {
-    return state.cardBalances.reduce(function (s, b) { return s + (b.paid ? 0 : b.amount); }, 0);
+  // A card transaction is committed spend the moment it's logged (it belongs
+  // in "spent this period" like anything else), but the cash for it doesn't
+  // leave the bank until the statement it lands on gets paid — so it must
+  // never also be subtracted from "leftover" in the period it was bought.
+  // The cash-out figure for a period is: everything paid by non-card methods
+  // in that period, plus whichever card statements have their *due date*
+  // (not their purchase date, not their statement date) inside that period.
+  // Every card pound is counted in exactly one due-date period, no matter
+  // which period it was actually spent in — that's what stops the double
+  // count and also makes purchases made just after a statement closes show
+  // up (correctly) a full cycle later than ones made just before it closes.
+  function cardDuesInRange(startStr, endExclusiveStr) {
+    return state.cardBalances
+      .filter(function (b) { return b.dueDate >= startStr && b.dueDate < endExclusiveStr; })
+      .reduce(function (s, b) { return s + b.amount; }, 0);
+  }
+
+  function cycleFinancials(txs, startStr, endExclusiveStr) {
+    var cashSpent = txs.reduce(function (s, t) { return s + (isCardTransaction(t) ? 0 : t.amount); }, 0);
+    var cardDues = cardDuesInRange(startStr, endExclusiveStr);
+    var leftover = state.income == null ? null : state.income - cashSpent - cardDues;
+    return { cashSpent: cashSpent, cardDues: cardDues, leftover: leftover };
   }
 
   // ---------- recurring / direct debits ----------
@@ -365,20 +404,21 @@
     document.getElementById("range-clear").hidden = !customRange;
   }
 
-  function leftoverSub(income, saved, cardsOwed) {
+  function leftoverSub(income, saved, cardDues) {
     if (income == null) return "add income to see this";
     var base = saved >= 0 ? "under budget" : "over budget";
-    if (cardsOwed > 0) return base + " · includes " + fmtMoney(cardsOwed) + " owed on cards";
+    if (cardDues > 0) return base + " · includes " + fmtMoney(cardDues) + " due on cards this period";
     return base;
   }
 
   function renderStats() {
     var el = document.getElementById("stats");
     var txs = currentTxs();
+    var range = activeRangeStr();
     var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
     var income = state.income;
-    var cardsOwed = totalOutstandingCardBalance();
-    var saved = income != null ? income - spent - cardsOwed : null;
+    var fin = cycleFinancials(txs, range.start, range.end);
+    var saved = fin.leftover;
     var rate = income != null && income > 0 ? (saved / income) * 100 : null;
 
     var incomeTileInner;
@@ -411,7 +451,7 @@
       '<div class="stat-tile">' +
       '<div class="stat-label">Left over</div>' +
       '<div class="stat-value ' + savedClass + '">' + (saved == null ? "—" : fmtMoney(saved)) + "</div>" +
-      '<div class="stat-sub">' + leftoverSub(income, saved, cardsOwed) + "</div>" +
+      '<div class="stat-sub">' + leftoverSub(income, saved, fin.cardDues) + "</div>" +
       "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Savings rate</div>' +
@@ -459,12 +499,23 @@
       var cat = CATEGORIES[CAT_INDEX[t.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var d = new Date(t.date + "T00:00:00");
       var dateShort = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+      var pmBadge = "";
+      if (t.paymentMethod) {
+        var card = cardForPaymentMethod(t.paymentMethod);
+        var titleAttr = "";
+        if (card) {
+          var settle = cardSettlement(card, t.date);
+          titleAttr = ' title="Bills on the ' + esc(fmtShortDate(settle.closeDateStr)) +
+            " statement · due " + esc(fmtShortDate(settle.dueDateStr)) + '"';
+        }
+        pmBadge = ' <span class="pm-badge"' + titleAttr + '>' + esc(t.paymentMethod) + "</span>";
+      }
       return (
         '<div class="ledger-row" data-id="' + esc(t.id) + '">' +
         '<div class="ledger-date">' + esc(dateShort) + "</div>" +
         '<div class="ledger-main">' +
         '<div class="ledger-cat"><span class="cat-dot" style="background:var(--cat-' + (CAT_INDEX[t.categoryId] + 1) + ')"></span>' + esc(cat.label) +
-        (t.paymentMethod ? ' <span class="pm-badge">' + esc(t.paymentMethod) + "</span>" : "") + "</div>" +
+        pmBadge + "</div>" +
         (t.note ? '<div class="ledger-note">' + esc(t.note) + "</div>" : "") +
         "</div>" +
         '<div class="ledger-amount">' + fmtMoney(t.amount) + "</div>" +
@@ -602,7 +653,8 @@
       }
 
       if (state.income != null && state.income > 0) {
-        var saved = state.income - spent;
+        var range = activeRangeStr();
+        var saved = cycleFinancials(txs, range.start, range.end).leftover;
         var rate = (saved / state.income) * 100;
         if (rate >= 20) {
           cards.push("You're saving " + Math.round(rate) + "% of income this period — ahead of the common 20% guideline.");
@@ -621,20 +673,43 @@
     el.innerHTML = cards.slice(0, 4).map(function (c) { return '<div class="insight-card">' + c + "</div>"; }).join("");
   }
 
+  // Builds the date for "day" in month m of year y, clamped to that month's
+  // actual last day — so a card/rule with day 31 lands on 28/29 Feb instead
+  // of silently overflowing into March (new Date(y, 1, 31) rolls forward).
+  function dateInMonth(y, m, day) {
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    return new Date(y, m, Math.min(day, lastDay));
+  }
+
   function nextOccurrence(day, from) {
     from = from || new Date();
     var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-    var candidate = new Date(today0.getFullYear(), today0.getMonth(), day);
-    if (candidate < today0) candidate = new Date(today0.getFullYear(), today0.getMonth() + 1, day);
+    var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
+    if (candidate < today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() + 1, day);
     return candidate;
   }
 
   function lastOccurrence(day, from) {
     from = from || new Date();
     var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-    var candidate = new Date(today0.getFullYear(), today0.getMonth(), day);
-    if (candidate > today0) candidate = new Date(today0.getFullYear(), today0.getMonth() - 1, day);
+    var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
+    if (candidate > today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() - 1, day);
     return candidate;
+  }
+
+  // Which statement a card purchase made on `dateStr` will be billed on, and
+  // when that statement is due. A purchase ON the statement's closing day
+  // itself is included in that day's statement (matches the app's existing
+  // convention of treating the statement day as "closed" that day — see
+  // pendingCardReminders' use of lastOccurrence below); anything after rolls
+  // to the following month's statement. This is what makes a purchase made
+  // right after a statement closes correctly show up a full cycle later than
+  // one made just before it, instead of both looking the same.
+  function cardSettlement(card, dateStr) {
+    var purchase = new Date(dateStr + "T00:00:00");
+    var closeDate = nextOccurrence(card.statementDay, purchase);
+    var dueDate = nextOccurrence(card.paymentDay, closeDate);
+    return { closeDateStr: todayStr(closeDate), dueDateStr: todayStr(dueDate) };
   }
 
   function daysAwayLabel(n) {
@@ -667,17 +742,60 @@
     return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
   }
 
+  function fmtShortDate(dateStr) {
+    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  }
+
   // credit card statement/payment reminders
 
+  // Every statement day for a card that has already closed and has no
+  // recorded balance yet — not just the most recent one. Walking forward
+  // from the statement right after the last one recorded (or, for a card
+  // with no history at all, from just its latest closed statement, so a
+  // freshly-added card doesn't get flooded with reminders for months before
+  // anyone was tracking it) means a month you forgot to enter still shows up
+  // instead of being silently replaced by the newer one.
   function pendingCardReminders() {
     var now = new Date();
     var out = [];
     state.creditCards.forEach(function (c) {
-      var stmtDateStr = todayStr(lastOccurrence(c.statementDay, now));
-      var exists = state.cardBalances.some(function (b) { return b.cardId === c.id && b.statementDate === stmtDateStr; });
-      if (!exists) out.push({ card: c, statementDate: stmtDateStr });
+      var latestCloseForCard = lastOccurrence(c.statementDay, now);
+      var recorded = state.cardBalances.filter(function (b) { return b.cardId === c.id; });
+      var cursor;
+      if (recorded.length) {
+        var mostRecentStr = recorded.map(function (b) { return b.statementDate; }).sort().slice(-1)[0];
+        cursor = nextOccurrence(c.statementDay, new Date(mostRecentStr + "T00:00:00"));
+      } else {
+        cursor = latestCloseForCard;
+      }
+      var guard = 0;
+      while (cursor <= latestCloseForCard && guard < 24) {
+        var stmtDateStr = todayStr(cursor);
+        var exists = recorded.some(function (b) { return b.statementDate === stmtDateStr; });
+        if (!exists) out.push({ card: c, statementDate: stmtDateStr });
+        cursor = nextOccurrence(c.statementDay, new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1));
+        guard++;
+      }
     });
     return out;
+  }
+
+  // Sum of this card's transactions since the previous statement closed, up
+  // to and including this one — the amount the real statement *should* show
+  // if every purchase on the card was logged in the ledger. Shown as a
+  // starting point when confirming a statement so entering it becomes
+  // "confirm or adjust" instead of retyping a total by hand; any gap against
+  // the real statement is interest, fees, or something not yet logged.
+  function derivedStatementAmount(card, closeDateStr) {
+    var dayBefore = new Date(new Date(closeDateStr + "T00:00:00").getTime() - 86400000);
+    var prevCloseStr = todayStr(lastOccurrence(card.statementDay, dayBefore));
+    return state.transactions
+      .filter(function (t) {
+        if (t.date <= prevCloseStr || t.date > closeDateStr) return false;
+        var tc = cardForPaymentMethod(t.paymentMethod);
+        return !!tc && tc.id === card.id;
+      })
+      .reduce(function (s, t) { return s + t.amount; }, 0);
   }
 
   function recordCardBalance(cardId, statementDate, amount) {
@@ -774,10 +892,17 @@
     el.innerHTML = pending.map(function (p) {
       var d = new Date(p.statementDate + "T00:00:00");
       var dateLabel = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+      var suggested = Math.round(derivedStatementAmount(p.card, p.statementDate) * 100) / 100;
+      var suggestedAttr = suggested > 0 ? ' value="' + suggested.toFixed(2) + '"' : "";
+      var hint = suggested > 0
+        ? '<div class="card-reminder-hint">Logged on this card since the last statement: ' + fmtMoney(suggested) +
+          " — adjust if the real statement differs (interest, fees, anything not logged)</div>"
+        : "";
       return (
         '<div class="card-reminder-row" data-card-id="' + esc(p.card.id) + '" data-stmt-date="' + esc(p.statementDate) + '">' +
-        '<div class="card-reminder-text">💳 <strong>' + esc(p.card.label) + "</strong> statement generated " + esc(dateLabel) + " — enter the balance to pay</div>" +
-        '<div class="amount-input"><span class="currency-prefix">£</span><input type="number" inputmode="decimal" step="0.01" min="0.01" class="card-reminder-input" placeholder="0.00" /></div>' +
+        '<div class="card-reminder-text">💳 <strong>' + esc(p.card.label) + "</strong> statement generated " + esc(dateLabel) + " — confirm the balance to pay</div>" +
+        hint +
+        '<div class="amount-input"><span class="currency-prefix">£</span><input type="number" inputmode="decimal" step="0.01" min="0.01" class="card-reminder-input" placeholder="0.00"' + suggestedAttr + ' /></div>' +
         '<button type="button" class="btn-primary card-reminder-save">Save</button>' +
         "</div>"
       );
@@ -882,8 +1007,8 @@
     var summary = fmtMoney(total) + " planned";
     if (state.income != null) {
       var txs = currentTxs();
-      var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
-      var leftover = state.income - spent - totalOutstandingCardBalance();
+      var range = activeRangeStr();
+      var leftover = cycleFinancials(txs, range.start, range.end).leftover;
       if (total <= leftover) {
         summary += " · fits within this period's " + fmtMoney(leftover) + " leftover";
       } else {
