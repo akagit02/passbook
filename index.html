@@ -707,6 +707,29 @@
   .goal-verdict.behind { color: var(--negative); }
   .goal-actions { display: flex; gap: 6px; margin-top: 8px; }
 
+  /* goal slider — a reality-check calculator inside the add-goal form, not
+     part of what gets submitted. min-width:0 on the wrap and the range input
+     itself stops the track overflowing a phone-width column, same issue as
+     the date inputs elsewhere. */
+  .goal-slider-wrap { min-width: 0; }
+  .goal-slider-wrap input[type="range"] {
+    width: 100%;
+    min-width: 0;
+    accent-color: var(--brass);
+    cursor: pointer;
+    height: 22px;
+  }
+  .goal-slider-scale {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    color: var(--ink-faint);
+    margin-top: -2px;
+  }
+  .goal-slider-readout { font-size: 0.82rem; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.45; }
+  .goal-slider-readout strong { font-weight: 600; color: var(--ink); }
+
   .app-footer { text-align: center; color: var(--ink-faint); font-size: 0.75rem; padding-top: 8px; }
 
   /* auth screen */
@@ -1236,6 +1259,16 @@
                 <option value="short">Short term</option>
                 <option value="long" selected>Long term</option>
               </select>
+            </div>
+            <div class="field field-wide">
+              <label for="g-monthly-slider">Realistic monthly amount <span class="opt">(defaults to what's needed)</span></label>
+              <div class="goal-slider-wrap">
+                <input id="g-monthly-slider" type="range" min="0" max="1000" step="100" value="0" />
+                <div class="goal-slider-scale" aria-hidden="true">
+                  <span>0</span><span>100</span><span>200</span><span>300</span><span>400</span><span>500</span><span>600</span><span>700</span><span>800</span><span>900</span><span>1000</span>
+                </div>
+              </div>
+              <p class="goal-slider-readout" id="g-slider-readout"></p>
             </div>
             <button type="submit" class="btn-secondary">Add goal</button>
           </form>

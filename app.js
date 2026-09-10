@@ -128,6 +128,7 @@
   var patternsExpanded = false;
   var currentView = "home"; // "home" | "savings"
   var showingGoalForm = false;
+  var goalSliderTouched = false; // true once the user has dragged the slider by hand this time round
   var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
 
   function todayStr(d) {
@@ -2274,13 +2275,79 @@
     });
   }
 
+  var GOAL_SLIDER_STEP = 100;
+  var GOAL_SLIDER_MAX = 1000;
+
+  // A reality-check calculator that lives inside the add-goal form: for
+  // whatever monthly amount the slider is at, shows the plain sum (no
+  // interest, no compounding) it adds up to over the entered duration, next
+  // to the target -- so it's obvious before saving whether a target and a
+  // duration actually go together. It never changes what gets submitted;
+  // the target amount and duration stay exactly what's typed into their own
+  // fields regardless of where the slider sits.
+  //
+  // Until the user drags the slider by hand, it tracks target/months
+  // automatically, snapped to the nearest £100 and clamped to the 0-1000
+  // range -- "the amount that would be needed". Touching it once stops that
+  // auto-tracking so exploring nearby amounts doesn't keep snapping back.
+  function updateGoalSlider() {
+    var slider = document.getElementById("g-monthly-slider");
+    var target = parseFloat(document.getElementById("g-target").value);
+    var months = parseInt(document.getElementById("g-months").value, 10);
+    var hasTarget = isFinite(target) && target > 0;
+    var hasMonths = isFinite(months) && months > 0;
+
+    if (!goalSliderTouched) {
+      var needed = hasTarget && hasMonths ? target / months : 0;
+      var snapped = Math.round(needed / GOAL_SLIDER_STEP) * GOAL_SLIDER_STEP;
+      slider.value = Math.max(0, Math.min(GOAL_SLIDER_MAX, snapped));
+    }
+
+    var el = document.getElementById("g-slider-readout");
+    if (!hasTarget || !hasMonths) {
+      el.textContent = "Fill in a target and a duration above, then drag the slider to see what different monthly amounts would add up to.";
+      return;
+    }
+
+    var monthly = Number(slider.value);
+    var total = monthly * months;
+    var diff = Math.round((total - target) * 100) / 100;
+    var base = "<strong>" + fmtMoney(monthly) + "/mo</strong> × " + months + (months === 1 ? " month" : " months") +
+      " = <strong>" + fmtMoney(total) + "</strong> total, no interest — ";
+    var compare;
+    if (diff === 0) {
+      compare = '<span class="goal-verdict on-track">exactly meets your ' + fmtMoney(target) + " target</span>";
+    } else if (diff > 0) {
+      compare = '<span class="goal-verdict on-track">' + fmtMoney(diff) + " over your " + fmtMoney(target) + " target</span>";
+    } else {
+      compare = '<span class="goal-verdict behind">' + fmtMoney(Math.abs(diff)) + " short of your " + fmtMoney(target) + " target</span>";
+    }
+    el.innerHTML = base + compare + ".";
+  }
+
+  function resetGoalSlider() {
+    goalSliderTouched = false;
+    document.getElementById("g-monthly-slider").value = 0;
+    updateGoalSlider();
+  }
+
   function wireGoalForm() {
     var form = document.getElementById("goal-form");
     document.getElementById("goal-form-toggle").addEventListener("click", function () {
       showingGoalForm = !showingGoalForm;
       form.hidden = !showingGoalForm;
       document.getElementById("goal-form-toggle").textContent = showingGoalForm ? "Cancel" : "+ Add a goal";
-      if (showingGoalForm) document.getElementById("g-name").focus();
+      if (showingGoalForm) {
+        resetGoalSlider();
+        document.getElementById("g-name").focus();
+      }
+    });
+
+    document.getElementById("g-target").addEventListener("input", updateGoalSlider);
+    document.getElementById("g-months").addEventListener("input", updateGoalSlider);
+    document.getElementById("g-monthly-slider").addEventListener("input", function () {
+      goalSliderTouched = true;
+      updateGoalSlider();
     });
 
     form.addEventListener("submit", function (e) {
@@ -2304,6 +2371,7 @@
       form.hidden = true;
       showingGoalForm = false;
       document.getElementById("goal-form-toggle").textContent = "+ Add a goal";
+      resetGoalSlider();
     });
   }
 
