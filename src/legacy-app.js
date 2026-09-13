@@ -11,6 +11,7 @@ import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
 import * as recurringDomain from "./recurring/index.js";
 import * as patternsDomain from "./patterns/index.js";
+import * as insightsDomain from "./insights/index.js";
 
 export async function boot() {
   "use strict";
@@ -429,20 +430,13 @@ export async function boot() {
     } else {
       var sums = sumBy(txs);
       var spent = txs.reduce(function (s, t) { return s + t.amount; }, 0);
-      var top = Object.keys(sums).map(function (k) { return { catId: k, amount: sums[k] }; }).sort(function (a, b) { return b.amount - a.amount; })[0];
+      var top = insightsDomain.topCategory(sums);
       var topCat = CATEGORIES[CAT_INDEX[top.catId]];
       var pct = spent > 0 ? Math.round((top.amount / spent) * 100) : 0;
       cards.push("<strong>" + esc(topCat.label) + "</strong> is your biggest spend this period at " + fmtMoney(top.amount) + " (" + pct + "% of total).");
 
       var prevSums = customRange ? {} : sumBy(spendingTxs(txForPeriod(shiftMonth(viewMonth, -1))));
-      var biggestJump = null;
-      Object.keys(sums).forEach(function (catId) {
-        var prev = prevSums[catId] || 0;
-        var delta = sums[catId] - prev;
-        if (prev > 0 && delta > 20 && delta / prev > 0.15) {
-          if (!biggestJump || delta > biggestJump.delta) biggestJump = { catId: catId, delta: delta };
-        }
-      });
+      var biggestJump = insightsDomain.biggestCategoryJump(sums, prevSums);
       if (biggestJump) {
         var jc = CATEGORIES[CAT_INDEX[biggestJump.catId]];
         cards.push("<strong>" + esc(jc.label) + "</strong> is up " + fmtMoney(biggestJump.delta) + " versus last period.");
@@ -451,14 +445,15 @@ export async function boot() {
       if (state.income != null && state.income > 0) {
         var range = activeRangeStr();
         var fin = cycleFinancials(allTxs, range.start, range.end);
-        var rate = (fin.putAside / state.income) * 100;
-        if (fin.leftover < 0) {
+        var nudge = insightsDomain.savingsRateNudge(fin, state.income);
+        var rate = nudge.rate;
+        if (nudge.kind === "overspent") {
           cards.push("Spending has outpaced income this period by " + fmtMoney(Math.abs(fin.leftover)) + ".");
-        } else if (rate >= 20) {
+        } else if (nudge.kind === "ahead") {
           cards.push("You've put aside " + Math.round(rate) + "% of income this period — ahead of the common 20% guideline.");
-        } else if (rate >= 10) {
+        } else if (nudge.kind === "closer") {
           cards.push("You've put aside " + Math.round(rate) + "% of income so far this period, getting closer to the 20% guideline some planners suggest.");
-        } else if (fin.putAside > 0) {
+        } else if (nudge.kind === "low") {
           cards.push("Only " + Math.round(rate) + "% of income put aside this period, with " + fmtMoney(fin.leftover) + " still unspent — the Savings tab can log a transfer.");
         } else {
           cards.push(fmtMoney(fin.leftover) + " is unspent this period but none of it has been put aside yet — the Savings tab can log a transfer.");
