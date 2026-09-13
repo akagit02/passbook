@@ -1,4 +1,4 @@
-import { test, expect, gbp, waitForSync } from "./fixtures.js";
+import { test, expect, gbp } from "./fixtures.js";
 
 // Characterization tests for the Savings view. Figures are derived in the
 // comments of supabase/test-seed.sql and re-derived (goal pacing, ISA totals,
@@ -92,28 +92,37 @@ test.describe("savings log", () => {
     await page.fill("#s-amount", "75");
     await page.selectOption("#s-vehicle", "other");
     await page.fill("#s-note", "E2E temp contribution");
-    await page.click("#savings-form button[type=submit]");
-
-    await expect(page.locator("#savings-log .savings-row")).toHaveCount(5);
-    await expect(page.locator("#savings-stats .stat-tile").first()).toContainText(gbp(625)); // 550 + 75
 
     // addSavingsContribution() inserts the transaction THEN the contribution
     // row, in the background (see TECH_DEBT.md's note on this being two
-    // un-transacted inserts). Deleting immediately fires its own two
-    // deletes right away; without this wait the delete of the transaction
-    // can land before the add's own contribution insert does, and that
-    // insert 409s on the foreign key.
-    await waitForSync(page);
+    // un-transacted inserts). Waiting for both real responses (rather than a
+    // fixed delay, which was flaky under load) before doing anything else
+    // rules out the delete-races-the-add FK error entirely.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/transactions") && r.request().method() === "POST"),
+      page.waitForResponse((r) => r.url().includes("/savings_contributions") && r.request().method() === "POST"),
+      page.click("#savings-form button[type=submit]")
+    ]);
+
+    await expect(page.locator("#savings-log .savings-row")).toHaveCount(5);
+    await expect(page.locator("#savings-stats .stat-tile").first()).toContainText(gbp(625)); // 550 + 75
 
     const row = page.locator(".savings-row", { hasText: "E2E temp contribution" });
     const del = row.locator(".savings-del");
     await del.click();
     await expect(del).toHaveText("Sure?");
-    await del.click();
+
+    // A fixed wait here was flaky under load (deleteSavingsContribution()
+    // fires two concurrent DELETEs) — wait for both actual responses
+    // instead of guessing a duration.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/transactions") && r.request().method() === "DELETE"),
+      page.waitForResponse((r) => r.url().includes("/savings_contributions") && r.request().method() === "DELETE"),
+      del.click()
+    ]);
 
     await expect(page.locator("#savings-log .savings-row")).toHaveCount(4);
     await expect(page.locator("#savings-stats .stat-tile").first()).toContainText(gbp(550));
-    await waitForSync(page);
 
     // The paired transactions-table row must be gone too, or "Spent this
     // period" / "Put aside" on Home would silently drift from the Savings

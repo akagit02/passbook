@@ -9,7 +9,11 @@ export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.js",
   fullyParallel: false, // tests share one seeded account/dataset
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // Every test hits a real, free-tier Supabase project over the network —
+  // one retry absorbs a rare transient blip (a dropped connection, an
+  // occasional auth hiccup) far more cheaply than re-running the whole
+  // suite. A test that fails twice in a row is a real failure, not noise.
+  retries: 1,
   workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
