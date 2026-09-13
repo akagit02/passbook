@@ -1,4 +1,4 @@
-import { test, expect, gbp } from "./fixtures.js";
+import { test, expect, gbp, waitForSync } from "./fixtures.js";
 
 test.describe("planned purchases", () => {
   test.beforeEach(async ({ signIn }) => {
@@ -27,6 +27,7 @@ test.describe("planned purchases", () => {
     await page.click("#planned-form button[type=submit]");
 
     await expect(page.locator("#planned-toggle")).toHaveText("Show 3 items");
+    await page.click("#planned-toggle"); // rows are hidden until expanded
     const row = page.locator(".planned-row", { hasText: "E2E temp planned" });
     await expect(row).toBeVisible();
 
@@ -36,7 +37,10 @@ test.describe("planned purchases", () => {
     await removeBtn.click();
 
     await expect(page.locator(".planned-row", { hasText: "E2E temp planned" })).toHaveCount(0);
-    await expect(page.locator("#planned-toggle")).toHaveText("Show 2 items");
+    // Still "Hide" not "Show": the toggle click earlier in this test expanded
+    // the list, and removing an item doesn't collapse it back.
+    await expect(page.locator("#planned-toggle")).toHaveText("Hide 2 items");
+    await waitForSync(page);
   });
 
   test("marking an item as bought converts it into a ledger transaction", async ({ page }) => {
@@ -44,6 +48,7 @@ test.describe("planned purchases", () => {
     await page.fill("#p-amount", "17.50");
     await page.selectOption("#p-category", "other");
     await page.click("#planned-form button[type=submit]");
+    await page.click("#planned-toggle"); // rows are hidden until expanded
 
     const row = page.locator(".planned-row", { hasText: "E2E temp bought item" });
     await row.locator(".btn-bought").click();
@@ -58,5 +63,6 @@ test.describe("planned purchases", () => {
     await del.click();
     await del.click();
     await expect(page.locator(".ledger-row", { hasText: "E2E temp bought item" })).toHaveCount(0);
+    await waitForSync(page);
   });
 });

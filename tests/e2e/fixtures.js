@@ -60,6 +60,27 @@ export const test = base.extend({
 
 export { expect };
 
+// dbCall() in app.js fires every Supabase write in the background without
+// the caller awaiting it (see app.js's own comment above dbCall — the UI
+// updates optimistically first, this is fire-and-forget on top). Two
+// concrete ways that bites an E2E test:
+//  - Playwright tears the page down at the end of a test; if a write is
+//    still in flight when that happens, the fetch is cancelled before it
+//    reaches Supabase, silently, with no console error. A cleanup delete
+//    that "passed" (the local UI showed 0) can still leave the row in the
+//    shared test account for the next test/run to trip over.
+//  - Two of a single action's OWN writes can race each other: e.g. adding a
+//    savings contribution does insert-transaction-THEN-insert-contribution;
+//    deleting it immediately afterwards fires its own two deletes right
+//    away, and if the delete of the transaction lands before the add's own
+//    contribution insert does, that insert 409s on the foreign key.
+// Call this after any action whose write must actually land before the next
+// step (usually: a test's final cleanup, or immediately after an add whose
+// own multi-step write you're about to un-do).
+export async function waitForSync(page) {
+  await page.waitForTimeout(800);
+}
+
 // Money strings as fmtMoney() (Intl.NumberFormat en-GB/GBP) renders them —
 // centralised so a test failure shows "expected '£297.79'" rather than a
 // hand-typed literal that might not match the app's own formatting quirks

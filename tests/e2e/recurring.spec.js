@@ -1,4 +1,4 @@
-import { test, expect, gbp } from "./fixtures.js";
+import { test, expect, gbp, waitForSync } from "./fixtures.js";
 
 test.describe("recurring payments", () => {
   test.beforeEach(async ({ signIn }) => {
@@ -64,5 +64,6 @@ test.describe("recurring payments", () => {
 
     await expect(page.locator("#recurring-list-toggle")).toHaveText("Show 3 payments");
     await expect(page.locator("#recurring-summary")).toHaveText(gbp(99.99) + "/mo across 3 payments");
+    await waitForSync(page);
   });
 });

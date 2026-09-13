@@ -1,4 +1,4 @@
-import { test, expect, gbp } from "./fixtures.js";
+import { test, expect, gbp, waitForSync } from "./fixtures.js";
 
 // Characterization tests for the Home view, run against the CURRENT
 // (pre-refactor) app and the fixed dataset in supabase/test-seed.sql, at the
@@ -23,7 +23,7 @@ test.describe("home stats", () => {
   test("shows the pay-cycle period label for September 2026", async ({ page }) => {
     // cycleStartDay() = 1 (both seeded income sources' pay days are 1 and
     // 15), so periods line up with calendar months.
-    await expect(page.locator("#month-label")).toHaveText("1 Sep – 30 Sep 2026");
+    await expect(page.locator("#month-label")).toHaveText("1 Sept – 30 Sept 2026");
     await expect(page.locator("#prev-month")).toBeVisible();
     await expect(page.locator("#range-clear")).toBeHidden();
   });
@@ -114,6 +114,7 @@ test.describe("ledger", () => {
 
     await expect(page.locator(".ledger-row", { hasText: "E2E temp expense" })).toHaveCount(0);
     await expect(page.locator("#ledger-count")).toHaveText("9 entries");
+    await waitForSync(page); // let the delete actually reach Supabase before the page closes
   });
 });
 
@@ -194,14 +195,20 @@ test.describe("custom date range", () => {
     await expect(page.locator("#prev-month")).toBeHidden();
     await expect(page.locator("#range-clear")).toBeVisible();
 
+    // August's non-savings, non-card spend is 63.00 (groceries) + 25.00
+    // (transport) + 15.00 (eating_out) + 105.00 (bills, incl. the
+    // auto-generated missing-rent occurrence) + 40.00 (installment) + 9.99
+    // (subscription) + 12.00 (health) = 269.99 cash, plus 90.00 on cards
+    // (60 PCC + 30 RCC) = 359.99 total. No card dues fall in August (both
+    // seeded due dates are in September). Leftover = 3000 - 269.99 - 150 = 2580.01.
     const tiles = page.locator("#stats .stat-tile");
-    await expect(tiles.nth(1)).toContainText(gbp(350));
+    await expect(tiles.nth(1)).toContainText(gbp(359.99));
     await expect(tiles.nth(1)).toContainText("11 expenses");
     await expect(tiles.nth(2)).toContainText(gbp(150));
-    await expect(tiles.nth(3)).toContainText(gbp(2590));
+    await expect(tiles.nth(3)).toContainText(gbp(2580.01));
 
     await page.click("#range-clear");
-    await expect(page.locator("#month-label")).toHaveText("1 Sep – 30 Sep 2026");
+    await expect(page.locator("#month-label")).toHaveText("1 Sept – 30 Sept 2026");
     await expect(page.locator("#prev-month")).toBeVisible();
   });
 });

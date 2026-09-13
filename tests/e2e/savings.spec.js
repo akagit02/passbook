@@ -1,4 +1,4 @@
-import { test, expect, gbp } from "./fixtures.js";
+import { test, expect, gbp, waitForSync } from "./fixtures.js";
 
 // Characterization tests for the Savings view. Figures are derived in the
 // comments of supabase/test-seed.sql and re-derived (goal pacing, ISA totals,
@@ -97,6 +97,14 @@ test.describe("savings log", () => {
     await expect(page.locator("#savings-log .savings-row")).toHaveCount(5);
     await expect(page.locator("#savings-stats .stat-tile").first()).toContainText(gbp(625)); // 550 + 75
 
+    // addSavingsContribution() inserts the transaction THEN the contribution
+    // row, in the background (see TECH_DEBT.md's note on this being two
+    // un-transacted inserts). Deleting immediately fires its own two
+    // deletes right away; without this wait the delete of the transaction
+    // can land before the add's own contribution insert does, and that
+    // insert 409s on the foreign key.
+    await waitForSync(page);
+
     const row = page.locator(".savings-row", { hasText: "E2E temp contribution" });
     const del = row.locator(".savings-del");
     await del.click();
@@ -105,6 +113,7 @@ test.describe("savings log", () => {
 
     await expect(page.locator("#savings-log .savings-row")).toHaveCount(4);
     await expect(page.locator("#savings-stats .stat-tile").first()).toContainText(gbp(550));
+    await waitForSync(page);
 
     // The paired transactions-table row must be gone too, or "Spent this
     // period" / "Put aside" on Home would silently drift from the Savings
