@@ -1,0 +1,25 @@
+{
+  "name": "passbook",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Passbook expense tracker — static site, Supabase backend",
+  "type": "module",
+  "scripts": {
+    "config": "node scripts/build-config.mjs",
+    "serve": "http-server . -p 8765 -c-1 -s",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pretest:e2e": "node scripts/build-config.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.48.0",
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0",
+    "http-server": "^14.1.1",
+    "vitest": "^2.1.3"
+  }
+}

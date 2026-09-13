@@ -1,3 +1,10 @@
 README.md
 TECH_DEBT.md
 SPEC.md
+
+# tooling
+node_modules/
+playwright-report/
+test-results/
+.env
+.env.local
