@@ -10,6 +10,7 @@ import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
 import * as recurringDomain from "./recurring/index.js";
+import * as patternsDomain from "./patterns/index.js";
 
 export async function boot() {
   "use strict";
@@ -123,77 +124,7 @@ export async function boot() {
 
   var WEEKDAY_LABELS = periodsDomain.WEEKDAY_LABELS;
 
-  function patternsWindowStart(sel) { return periodsDomain.patternsWindowStart(sel); }
-  function patternsPriorWindowRange(sel) { return periodsDomain.patternsPriorWindowRange(sel); }
-  function txSince(startStr) { return periodsDomain.txSince(state.transactions, startStr); }
-  function txInRange(startStr, endExclusive) { return periodsDomain.txInRange(state.transactions, startStr, endExclusive); }
-
-  function groupTxByCategory(txs) {
-    var out = {};
-    txs.forEach(function (t) {
-      (out[t.categoryId] = out[t.categoryId] || []).push(t);
-    });
-    return out;
-  }
-
-  function averageGapDays(dateStrs) {
-    if (dateStrs.length < 2) return null;
-    var sorted = dateStrs.slice().sort();
-    var first = new Date(sorted[0] + "T00:00:00");
-    var last = new Date(sorted[sorted.length - 1] + "T00:00:00");
-    var spanDays = (last - first) / 86400000;
-    return spanDays / (sorted.length - 1);
-  }
-
-  function mostCommonWeekday(dateStrs) {
-    if (!dateStrs.length) return null;
-    var counts = new Array(7).fill(0);
-    dateStrs.forEach(function (d) { counts[new Date(d + "T00:00:00").getDay()]++; });
-    var best = 0;
-    for (var i = 1; i < 7; i++) { if (counts[i] > counts[best]) best = i; }
-    return { day: best, count: counts[best] };
-  }
-
-  function computeCategoryPattern(catId, txs) {
-    var dates = txs.map(function (t) { return t.date; });
-    var total = txs.reduce(function (s, t) { return s + t.amount; }, 0);
-    return {
-      catId: catId,
-      count: txs.length,
-      avgAmount: total / txs.length,
-      avgGapDays: averageGapDays(dates),
-      weekday: txs.length >= 3 ? mostCommonWeekday(dates) : null
-    };
-  }
-
-  function computePatternsData(sel) {
-    var windowStart = patternsWindowStart(sel);
-    var currentTxs = spendingTxs(txSince(windowStart));
-    var groups = groupTxByCategory(currentTxs);
-
-    var priorRange = patternsPriorWindowRange(sel);
-    var priorCounts = {};
-    if (priorRange) {
-      var priorTxs = spendingTxs(txInRange(priorRange.start, priorRange.end));
-      priorTxs.forEach(function (t) { priorCounts[t.categoryId] = (priorCounts[t.categoryId] || 0) + 1; });
-    }
-
-    var rows = Object.keys(groups).map(function (catId) {
-      var row = computeCategoryPattern(catId, groups[catId]);
-      if (!priorRange) {
-        row.trend = null;
-      } else {
-        var prior = priorCounts[catId] || 0;
-        if (prior === 0) row.trend = { kind: "none" };
-        else if (prior === row.count) row.trend = { kind: "flat" };
-        else row.trend = { kind: row.count > prior ? "up" : "down", pct: Math.round(((row.count - prior) / prior) * 100) };
-      }
-      return row;
-    });
-
-    rows.sort(function (a, b) { return b.count - a.count; });
-    return rows;
-  }
+  function computePatternsData(sel) { return patternsDomain.computePatternsData(state.transactions, sel); }
 
   // ---------- rendering ----------
 
