@@ -4,9 +4,10 @@
 // left in here are thin wrappers that bind the module-level `state` to those
 // pure functions, so the rendering/wiring code below didn't need to change.
 
-import { todayStr, shiftMonth, esc, genId } from "./lib/index.js";
+import { todayStr, shiftMonth, esc, genId, nextOccurrence } from "./lib/index.js";
 import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
 import * as periodsDomain from "./periods/index.js";
+import * as cardsDomain from "./cards/index.js";
 
 export async function boot() {
   "use strict";
@@ -17,17 +18,10 @@ export async function boot() {
     window.PASSBOOK_CONFIG.SUPABASE_ANON_KEY
   );
 
-  var CARD_ALIASES = { PCC: { id: "premium", label: /premium/i }, RCC: { id: "regular", label: /regular/i } };
+  // ---------- credit cards (src/cards) ----------
 
-  function cardForPaymentMethod(pm) {
-    var alias = CARD_ALIASES[pm];
-    if (!alias) return null;
-    var byId = state.creditCards.filter(function (c) { return c.id === alias.id; })[0];
-    if (byId) return byId;
-    return state.creditCards.filter(function (c) { return alias.label.test(c.label); })[0] || null;
-  }
-
-  function isCardTransaction(t) { return !!cardForPaymentMethod(t.paymentMethod); }
+  function cardForPaymentMethod(pm) { return cardsDomain.cardForPaymentMethod(pm, state.creditCards); }
+  function isCardTransaction(t) { return cardsDomain.isCardTransaction(t, state.creditCards); }
 
   var editingIncome = false;
   var editingCalendar = false;
@@ -115,11 +109,7 @@ export async function boot() {
   // which period it was actually spent in — that's what stops the double
   // count and also makes purchases made just after a statement closes show
   // up (correctly) a full cycle later than ones made just before it closes.
-  function cardDuesInRange(startStr, endExclusiveStr) {
-    return state.cardBalances
-      .filter(function (b) { return b.dueDate >= startStr && b.dueDate < endExclusiveStr; })
-      .reduce(function (s, b) { return s + b.amount; }, 0);
-  }
+  function cardDuesInRange(startStr, endExclusiveStr) { return cardsDomain.cardDuesInRange(state.cardBalances, startStr, endExclusiveStr); }
 
   // Money deliberately put aside is still money that has left the account, so
   // it comes off "left over" exactly like spending does — but it isn't
@@ -641,44 +631,7 @@ export async function boot() {
     el.innerHTML = cards.slice(0, 4).map(function (c) { return '<div class="insight-card">' + c + "</div>"; }).join("");
   }
 
-  // Builds the date for "day" in month m of year y, clamped to that month's
-  // actual last day — so a card/rule with day 31 lands on 28/29 Feb instead
-  // of silently overflowing into March (new Date(y, 1, 31) rolls forward).
-  function dateInMonth(y, m, day) {
-    var lastDay = new Date(y, m + 1, 0).getDate();
-    return new Date(y, m, Math.min(day, lastDay));
-  }
-
-  function nextOccurrence(day, from) {
-    from = from || new Date();
-    var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-    var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
-    if (candidate < today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() + 1, day);
-    return candidate;
-  }
-
-  function lastOccurrence(day, from) {
-    from = from || new Date();
-    var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-    var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
-    if (candidate > today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() - 1, day);
-    return candidate;
-  }
-
-  // Which statement a card purchase made on `dateStr` will be billed on, and
-  // when that statement is due. A purchase ON the statement's closing day
-  // itself is included in that day's statement (matches the app's existing
-  // convention of treating the statement day as "closed" that day — see
-  // pendingCardReminders' use of lastOccurrence below); anything after rolls
-  // to the following month's statement. This is what makes a purchase made
-  // right after a statement closes correctly show up a full cycle later than
-  // one made just before it, instead of both looking the same.
-  function cardSettlement(card, dateStr) {
-    var purchase = new Date(dateStr + "T00:00:00");
-    var closeDate = nextOccurrence(card.statementDay, purchase);
-    var dueDate = nextOccurrence(card.paymentDay, closeDate);
-    return { closeDateStr: todayStr(closeDate), dueDateStr: todayStr(dueDate) };
-  }
+  function cardSettlement(card, dateStr) { return cardsDomain.cardSettlement(card, dateStr); }
 
   function daysAwayLabel(n) {
     if (n === 0) return "today";
@@ -723,30 +676,7 @@ export async function boot() {
   // freshly-added card doesn't get flooded with reminders for months before
   // anyone was tracking it) means a month you forgot to enter still shows up
   // instead of being silently replaced by the newer one.
-  function pendingCardReminders() {
-    var now = new Date();
-    var out = [];
-    state.creditCards.forEach(function (c) {
-      var latestCloseForCard = lastOccurrence(c.statementDay, now);
-      var recorded = state.cardBalances.filter(function (b) { return b.cardId === c.id; });
-      var cursor;
-      if (recorded.length) {
-        var mostRecentStr = recorded.map(function (b) { return b.statementDate; }).sort().slice(-1)[0];
-        cursor = nextOccurrence(c.statementDay, new Date(mostRecentStr + "T00:00:00"));
-      } else {
-        cursor = latestCloseForCard;
-      }
-      var guard = 0;
-      while (cursor <= latestCloseForCard && guard < 24) {
-        var stmtDateStr = todayStr(cursor);
-        var exists = recorded.some(function (b) { return b.statementDate === stmtDateStr; });
-        if (!exists) out.push({ card: c, statementDate: stmtDateStr });
-        cursor = nextOccurrence(c.statementDay, new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1));
-        guard++;
-      }
-    });
-    return out;
-  }
+  function pendingCardReminders() { return cardsDomain.pendingCardReminders(state.creditCards, state.cardBalances); }
 
   // Sum of this card's transactions since the previous statement closed, up
   // to and including this one — the amount the real statement *should* show
@@ -755,27 +685,17 @@ export async function boot() {
   // "confirm or adjust" instead of retyping a total by hand; any gap against
   // the real statement is interest, fees, or something not yet logged.
   function derivedStatementAmount(card, closeDateStr) {
-    var dayBefore = new Date(new Date(closeDateStr + "T00:00:00").getTime() - 86400000);
-    var prevCloseStr = todayStr(lastOccurrence(card.statementDay, dayBefore));
-    return state.transactions
-      .filter(function (t) {
-        if (t.date <= prevCloseStr || t.date > closeDateStr) return false;
-        var tc = cardForPaymentMethod(t.paymentMethod);
-        return !!tc && tc.id === card.id;
-      })
-      .reduce(function (s, t) { return s + t.amount; }, 0);
+    return cardsDomain.derivedStatementAmount(card, closeDateStr, state.transactions, state.creditCards);
   }
 
   function recordCardBalance(cardId, statementDate, amount) {
     var card = state.creditCards.filter(function (c) { return c.id === cardId; })[0];
     if (!card) return;
-    var stmtDateObj = new Date(statementDate + "T00:00:00");
-    var dueDateObj = nextOccurrence(card.paymentDay, stmtDateObj);
     var entry = {
       id: genId(),
       cardId: cardId,
       statementDate: statementDate,
-      dueDate: todayStr(dueDateObj),
+      dueDate: cardsDomain.statementDueDate(card, statementDate),
       amount: amount,
       paid: false,
       paidDate: null,

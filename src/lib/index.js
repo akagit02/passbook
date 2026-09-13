@@ -39,6 +39,30 @@ export function monthsAgoDate(n, from) {
   return new Date(y, m, day);
 }
 
+// Builds the date for "day" in month m of year y, clamped to that month's
+// actual last day — so a card/rule with day 31 lands on 28/29 Feb instead
+// of silently overflowing into March (new Date(y, 1, 31) rolls forward).
+export function dateInMonth(y, m, day) {
+  var lastDay = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(day, lastDay));
+}
+
+export function nextOccurrence(day, from) {
+  from = from || new Date();
+  var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
+  if (candidate < today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() + 1, day);
+  return candidate;
+}
+
+export function lastOccurrence(day, from) {
+  from = from || new Date();
+  var today0 = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  var candidate = dateInMonth(today0.getFullYear(), today0.getMonth(), day);
+  if (candidate > today0) candidate = dateInMonth(today0.getFullYear(), today0.getMonth() - 1, day);
+  return candidate;
+}
+
 export function averageGapDays(dateStrs) {
   if (dateStrs.length < 2) return null;
   var sorted = dateStrs.slice().sort();
