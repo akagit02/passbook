@@ -2,6 +2,8 @@
 // This is the exact original app.js IIFE body, re-exported as boot().
 // Phase 1 will extract pure functions out of this one at a time.
 
+import { todayStr, shiftMonth, esc, genId, clampDay, monthsAgoDate, averageGapDays, mostCommonWeekday } from "./lib/index.js";
+
 export async function boot() {
   "use strict";
 
