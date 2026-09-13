@@ -3,6 +3,7 @@
 // Phase 1 will extract pure functions out of this one at a time.
 
 import { todayStr, shiftMonth, esc, genId, clampDay, monthsAgoDate, averageGapDays, mostCommonWeekday } from "./lib/index.js";
+import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, VEHICLE_BY_ID, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, PAYMENT_METHODS, CARD_ALIASES, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
 
 export async function boot() {
   "use strict";
