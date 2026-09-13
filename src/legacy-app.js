@@ -9,6 +9,7 @@ import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_
 import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
+import * as recurringDomain from "./recurring/index.js";
 
 export async function boot() {
   "use strict";
@@ -22,7 +23,6 @@ export async function boot() {
   // ---------- credit cards (src/cards) ----------
 
   function cardForPaymentMethod(pm) { return cardsDomain.cardForPaymentMethod(pm, state.creditCards); }
-  function isCardTransaction(t) { return cardsDomain.isCardTransaction(t, state.creditCards); }
 
   var editingIncome = false;
   var editingCalendar = false;
@@ -95,19 +95,6 @@ export async function boot() {
 
   var sumBy = cashflowDomain.sumBy;
 
-  // A card transaction is committed spend the moment it's logged (it belongs
-  // in "spent this period" like anything else), but the cash for it doesn't
-  // leave the bank until the statement it lands on gets paid — so it must
-  // never also be subtracted from "leftover" in the period it was bought.
-  // The cash-out figure for a period is: everything paid by non-card methods
-  // in that period, plus whichever card statements have their *due date*
-  // (not their purchase date, not their statement date) inside that period.
-  // Every card pound is counted in exactly one due-date period, no matter
-  // which period it was actually spent in — that's what stops the double
-  // count and also makes purchases made just after a statement closes show
-  // up (correctly) a full cycle later than ones made just before it closes.
-  function cardDuesInRange(startStr, endExclusiveStr) { return cardsDomain.cardDuesInRange(state.cardBalances, startStr, endExclusiveStr); }
-
   // Money deliberately put aside is still money that has left the account, so
   // it comes off "left over" exactly like spending does — but it isn't
   // spending, and lumping the two together would make a good month (a big
@@ -119,83 +106,16 @@ export async function boot() {
     return cashflowDomain.cycleFinancials(txs, startStr, endExclusiveStr, state);
   }
 
-  // ---------- recurring / direct debits ----------
+  // ---------- recurring / direct debits (src/recurring) ----------
 
-  function recurringOccurrenceDate(rule, monthKey) {
-    var parts = monthKey.split("-").map(Number);
-    var y = parts[0], m = parts[1] - 1;
-    var lastDay = new Date(y, m + 1, 0).getDate();
-    var day = Math.min(rule.dayOfMonth, lastDay);
-    return new Date(y, m, day);
-  }
+  function installmentRemaining(rule) { return recurringDomain.installmentRemaining(rule, state.transactions); }
 
-  function installmentPaidSoFar(rule) {
-    return state.transactions.reduce(function (s, t) {
-      return t.recurringId === rule.id ? s + t.amount : s;
-    }, 0);
-  }
-
-  function installmentRemaining(rule) {
-    if (!rule.installment) return null;
-    var paid = installmentPaidSoFar(rule);
-    var remaining = Math.round((rule.installment.totalOwed - paid) * 100) / 100;
-    return Math.max(0, remaining);
-  }
-
-  // Recurring transactions are never backfilled earlier than this date, no
-  // matter how old a rule's own start month is — keeps auto-generation from
-  // resurrecting history from before this feature's rollout.
-  var RECURRING_BACKFILL_FLOOR = new Date(2026, 7, 15); // 15 Aug 2026
-  var RECURRING_BACKFILL_FLOOR_MONTH = "2026-08";
-
-  // Generates any due-but-not-yet-logged recurring transactions — walking
-  // forward one pay-cycle month at a time, from RECURRING_BACKFILL_FLOOR (or
-  // the rule's own startMonth if later) up through the current month — so a
-  // rule that was missed for several months in a row gets every missed
-  // occurrence logged, not just the most recent one. Returns the array of
-  // newly created ones (already pushed into state.transactions) so the
-  // caller can batch-insert them into Supabase.
+  // Generates any due-but-not-yet-logged recurring transactions, adds them to
+  // state.transactions, and returns them so the caller can batch-insert them
+  // into Supabase.
   function generateRecurringTransactions() {
-    var now = new Date();
-    var today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    var currentMk = todayStr().slice(0, 7);
-    var created = [];
-
-    state.recurringExpenses.forEach(function (rule) {
-      if (!rule.active) return;
-      var mk = (rule.startMonth && rule.startMonth > RECURRING_BACKFILL_FLOOR_MONTH) ? rule.startMonth : RECURRING_BACKFILL_FLOOR_MONTH;
-
-      while (mk <= currentMk) {
-        var already = state.transactions.some(function (t) { return t.recurringId === rule.id && t.recurringOccurrence === mk; });
-        if (already) { mk = shiftMonth(mk, 1); continue; }
-
-        var occDate = recurringOccurrenceDate(rule, mk);
-        if (occDate > today0) break; // this and every later occurrence hasn't happened yet
-        if (occDate < RECURRING_BACKFILL_FLOOR) { mk = shiftMonth(mk, 1); continue; }
-
-        var amount = rule.amount;
-        if (rule.installment) {
-          var remaining = installmentRemaining(rule);
-          if (remaining <= 0) break; // fully paid off — stop generating
-          amount = Math.round(Math.min(amount, remaining) * 100) / 100;
-        }
-
-        var t = {
-          id: genId(),
-          amount: amount,
-          date: todayStr(occDate),
-          categoryId: rule.categoryId,
-          note: rule.label,
-          recurringId: rule.id,
-          recurringOccurrence: mk
-        };
-        state.transactions.push(t);
-        created.push(t);
-
-        mk = shiftMonth(mk, 1);
-      }
-    });
-
+    var created = recurringDomain.generateRecurringTransactions(state.recurringExpenses, state.transactions);
+    Array.prototype.push.apply(state.transactions, created);
     return created;
   }
 
