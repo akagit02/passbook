@@ -8,6 +8,7 @@ import { todayStr, shiftMonth, esc, genId, nextOccurrence } from "./lib/index.js
 import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
 import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
+import * as cashflowDomain from "./cashflow/index.js";
 
 export async function boot() {
   "use strict";
@@ -92,11 +93,7 @@ export async function boot() {
     return periodsDomain.txInRange(state.transactions, periodStartStr(mk), periodEndStr(mk));
   }
 
-  function sumBy(txs) {
-    var out = {};
-    txs.forEach(function (t) { out[t.categoryId] = (out[t.categoryId] || 0) + t.amount; });
-    return out;
-  }
+  var sumBy = cashflowDomain.sumBy;
 
   // A card transaction is committed spend the moment it's logged (it belongs
   // in "spent this period" like anything else), but the cash for it doesn't
@@ -119,15 +116,7 @@ export async function boot() {
   // cash leaving now, never as card credit, because that's what it is: you
   // can't move money into a savings pot on a credit card.
   function cycleFinancials(txs, startStr, endExclusiveStr) {
-    var cashSpent = 0;
-    var putAside = 0;
-    txs.forEach(function (t) {
-      if (isSavingsTx(t)) { putAside += t.amount; return; }
-      if (!isCardTransaction(t)) cashSpent += t.amount;
-    });
-    var cardDues = cardDuesInRange(startStr, endExclusiveStr);
-    var leftover = state.income == null ? null : state.income - cashSpent - putAside - cardDues;
-    return { cashSpent: cashSpent, putAside: putAside, cardDues: cardDues, leftover: leftover };
+    return cashflowDomain.cycleFinancials(txs, startStr, endExclusiveStr, state);
   }
 
   // ---------- recurring / direct debits ----------
