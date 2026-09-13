@@ -1,9 +1,12 @@
 // Legacy monolithic app, wrapped as an ES module.
-// This is the exact original app.js IIFE body, re-exported as boot().
-// Phase 1 will extract pure functions out of this one at a time.
+// Originally the app.js IIFE body, re-exported as boot(). Pure domain logic
+// has been extracted into src/<domain>/index.js; the same-named functions
+// left in here are thin wrappers that bind the module-level `state` to those
+// pure functions, so the rendering/wiring code below didn't need to change.
 
-import { todayStr, shiftMonth, esc, genId, clampDay, monthsAgoDate, averageGapDays, mostCommonWeekday } from "./lib/index.js";
-import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, VEHICLE_BY_ID, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, PAYMENT_METHODS, CARD_ALIASES, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
+import { todayStr, shiftMonth, esc, genId } from "./lib/index.js";
+import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
+import * as periodsDomain from "./periods/index.js";
 
 export async function boot() {
   "use strict";
@@ -14,78 +17,6 @@ export async function boot() {
     window.PASSBOOK_CONFIG.SUPABASE_ANON_KEY
   );
 
-  // `discretionary` marks the categories the "where you could cut" analysis is
-  // allowed to suggest trimming. Everything without it is treated as a cost
-  // you can't simply decide to stop paying — it also forms the "essential
-  // spend" figure the emergency-fund target is sized against.
-  var CATEGORIES = [
-    { id: "housing", label: "Housing" },
-    { id: "groceries", label: "Groceries" },
-    { id: "transport", label: "Transport" },
-    { id: "eating_out", label: "Eating out", discretionary: true },
-    { id: "bills", label: "Bills & utilities" },
-    { id: "shopping", label: "Shopping", discretionary: true },
-    { id: "health", label: "Health" },
-    { id: "entertainment", label: "Entertainment", discretionary: true },
-    { id: "other", label: "Other" },
-    { id: "insurance", label: "Insurance" },
-    { id: "savings", label: "Savings" }
-  ];
-  var CAT_INDEX = {};
-  CATEGORIES.forEach(function (c, i) { CAT_INDEX[c.id] = i; });
-
-  // ---------- savings ----------
-
-  // Money put aside is logged as an ordinary transaction in this category (so
-  // it lands in the ledger and comes off "left over" through the same path as
-  // any other money leaving a bank account), paired with a row in
-  // savings_contributions holding the part the ledger has no room for: where
-  // it went. Everything that treats transactions as *spending* has to exclude
-  // this category — see spendingTxs().
-  var SAVINGS_CAT = "savings";
-
-  // `tier` is what the allocation advice reasons about: cash is instantly
-  // reachable and doesn't move in value, low is capital-preservation with a
-  // modest yield, growth is expected to return more over long periods while
-  // being free to fall in the short ones. `isa` marks the two that draw on the
-  // annual ISA allowance.
-  var SAVINGS_VEHICLES = [
-    { id: "savings_account", label: "Savings account", tier: "cash" },
-    { id: "current_account", label: "Current account", tier: "cash" },
-    { id: "cash", label: "Cash at home", tier: "cash" },
-    { id: "cash_isa", label: "Cash ISA", tier: "low", isa: true },
-    { id: "premium_bonds", label: "Premium bonds", tier: "low" },
-    { id: "stocks_isa", label: "Stocks & shares ISA", tier: "growth", isa: true },
-    { id: "stocks_general", label: "Stocks (outside an ISA)", tier: "growth" },
-    { id: "pension", label: "Pension", tier: "growth" },
-    { id: "other", label: "Something else", tier: "other" }
-  ];
-  var VEHICLE_BY_ID = {};
-  SAVINGS_VEHICLES.forEach(function (v) { VEHICLE_BY_ID[v.id] = v; });
-
-  var TIER_LABELS = { cash: "Easy access cash", low: "Lower risk", growth: "Growth / market risk", other: "Other" };
-
-  // UK ISA subscription limit and tax-year boundary (6 April). Both are
-  // policy numbers that can change in a Budget — they live here as named
-  // constants so updating them is a one-line change.
-  var ISA_ANNUAL_ALLOWANCE = 20000;
-  var TAX_YEAR_START_MONTH = 3; // April, 0-indexed
-  var TAX_YEAR_START_DAY = 6;
-
-  function vehicleFor(id) { return VEHICLE_BY_ID[id] || VEHICLE_BY_ID.other; }
-
-  // "Paid using" is a free-text field backed by a datalist (see
-  // #payment-method-options in index.html), not a locked set of DB rows —
-  // this list just needs to match what's in that datalist.
-  var PAYMENT_METHODS = ["PCC", "RCC", "sal acc", "wife sal acc", "cur acc"];
-
-  // "PCC" (Premium credit card) and "RCC" (Regular credit card) are the two
-  // "paid using" values that actually mean a credit card was used, rather
-  // than money leaving a bank account straight away — everything else in
-  // PAYMENT_METHODS is a cash-equivalent account. This maps those two
-  // shorthands to the matching row in credit_cards (matched by id first,
-  // falling back to the label so a renamed/re-seeded card still resolves)
-  // without needing a schema change to store the link explicitly.
   var CARD_ALIASES = { PCC: { id: "premium", label: /premium/i }, RCC: { id: "regular", label: /regular/i } };
 
   function cardForPaymentMethod(pm) {
@@ -97,14 +28,6 @@ export async function boot() {
   }
 
   function isCardTransaction(t) { return !!cardForPaymentMethod(t.paymentMethod); }
-
-  function isSavingsTx(t) { return t.categoryId === SAVINGS_CAT; }
-
-  // Everything that answers "what did I spend?" — the breakdown, the patterns,
-  // the insights, the cut analysis — has to run through this. Savings sitting
-  // in the same transactions table would otherwise show up as the third
-  // biggest "expense" of the month.
-  function spendingTxs(txs) { return txs.filter(function (t) { return !isSavingsTx(t); }); }
 
   var editingIncome = false;
   var editingCalendar = false;
@@ -138,83 +61,29 @@ export async function boot() {
   var goalSliderTouched = false; // true once the user has dragged the slider by hand this time round
   var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
 
-  function todayStr(d) {
-    d = d || new Date();
-    var y = d.getFullYear();
-    var m = String(d.getMonth() + 1).padStart(2, "0");
-    var day = String(d.getDate()).padStart(2, "0");
-    return y + "-" + m + "-" + day;
-  }
+  // ---------- pay-cycle periods (src/periods) ----------
 
-  function shiftMonth(mk, delta) {
-    var parts = mk.split("-").map(Number);
-    var d = new Date(parts[0], parts[1] - 1 + delta, 1);
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-  }
-
-  // ---------- pay-cycle periods ----------
-  // A "period" runs from the earliest configured payday of one calendar month
-  // to the day before that same payday next month (e.g. 15 Aug – 14 Sep), so
-  // spending is tracked in line with when salary actually lands rather than
-  // resetting mid-cycle on the 1st. The period is keyed the same way a
-  // calendar month was ("YYYY-MM"), just reinterpreted as "the period that
-  // starts on cycle-start-day of that month".
-
-  function cycleStartDay() {
-    var days = (state.incomeSources || []).map(function (s) { return s.payDay; }).filter(function (d) { return typeof d === "number" && isFinite(d); });
-    return days.length ? Math.min.apply(null, days) : 1;
-  }
-
-  function periodStartDate(mk) {
-    var parts = mk.split("-").map(Number);
-    var y = parts[0], m = parts[1] - 1;
-    var lastDay = new Date(y, m + 1, 0).getDate();
-    var day = Math.min(cycleStartDay(), lastDay);
-    return new Date(y, m, day);
-  }
-
-  function periodStartStr(mk) { return todayStr(periodStartDate(mk)); }
-  function periodEndStr(mk) { return periodStartStr(shiftMonth(mk, 1)); } // exclusive
+  function cycleStartDay() { return periodsDomain.cycleStartDay(state.incomeSources); }
+  function periodStartStr(mk) { return periodsDomain.periodStartStr(mk, cycleStartDay()); }
+  function periodEndStr(mk) { return periodsDomain.periodEndStr(mk, cycleStartDay()); } // exclusive
+  function periodLabel(mk) { return periodsDomain.periodLabel(mk, cycleStartDay()); }
+  function currentPeriodKey() { return periodsDomain.currentPeriodKey(cycleStartDay()); }
 
   // ---------- custom date range (alternative to the pay-cycle period above) ----------
 
-  function customRangeEndExclusive(range) {
-    var d = new Date(range.end + "T00:00:00");
-    d.setDate(d.getDate() + 1);
-    return todayStr(d);
-  }
-
   function activeRangeStr() {
-    if (customRange) return { start: customRange.start, end: customRangeEndExclusive(customRange) };
+    if (customRange) return { start: customRange.start, end: periodsDomain.customRangeEndExclusive(customRange) };
     return { start: periodStartStr(viewMonth), end: periodEndStr(viewMonth) };
   }
 
   function activeRangeLabel() {
     if (!customRange) return periodLabel(viewMonth);
-    var startD = new Date(customRange.start + "T00:00:00");
-    var endD = new Date(customRange.end + "T00:00:00");
-    var startStr = startD.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    var endStr = endD.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-    return startStr + " – " + endStr;
+    return periodsDomain.dateRangeLabel(new Date(customRange.start + "T00:00:00"), new Date(customRange.end + "T00:00:00"));
   }
 
   function currentTxs() {
     var r = activeRangeStr();
-    return state.transactions.filter(function (t) { return t.date >= r.start && t.date < r.end; });
-  }
-
-  function periodLabel(mk) {
-    var startD = periodStartDate(mk);
-    var endD = new Date(periodStartDate(shiftMonth(mk, 1)).getTime() - 86400000);
-    var startStr = startD.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    var endStr = endD.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-    return startStr + " – " + endStr;
-  }
-
-  function currentPeriodKey() {
-    var now = new Date();
-    var mk = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
-    return now.getDate() >= cycleStartDay() ? mk : shiftMonth(mk, -1);
+    return periodsDomain.txInRange(state.transactions, r.start, r.end);
   }
 
   function fmtMoney(n) {
@@ -225,26 +94,8 @@ export async function boot() {
     }
   }
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-    });
-  }
-
-  function genId() {
-    return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  }
-
-  function clampDay(n) {
-    n = Math.round(n);
-    if (!isFinite(n)) return 1;
-    return Math.min(31, Math.max(1, n));
-  }
-
   function txForPeriod(mk) {
-    var start = periodStartStr(mk);
-    var end = periodEndStr(mk);
-    return state.transactions.filter(function (t) { return t.date >= start && t.date < end; });
+    return periodsDomain.txInRange(state.transactions, periodStartStr(mk), periodEndStr(mk));
   }
 
   function sumBy(txs) {
@@ -371,35 +222,12 @@ export async function boot() {
 
   // ---------- spending patterns ----------
 
-  var WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  var WEEKDAY_LABELS = periodsDomain.WEEKDAY_LABELS;
 
-  function monthsAgoDate(n, from) {
-    from = from || new Date();
-    var y = from.getFullYear(), m = from.getMonth() - n;
-    var lastDay = new Date(y, m + 1, 0).getDate();
-    var day = Math.min(from.getDate(), lastDay);
-    return new Date(y, m, day);
-  }
-
-  function patternsWindowStart(sel) {
-    if (sel === "all") return null;
-    return todayStr(monthsAgoDate(parseInt(sel, 10)));
-  }
-
-  function patternsPriorWindowRange(sel) {
-    if (sel === "all") return null;
-    var n = parseInt(sel, 10);
-    return { start: todayStr(monthsAgoDate(n * 2)), end: todayStr(monthsAgoDate(n)) };
-  }
-
-  function txSince(startStr) {
-    if (startStr == null) return state.transactions.slice();
-    return state.transactions.filter(function (t) { return t.date >= startStr; });
-  }
-
-  function txInRange(startStr, endExclusive) {
-    return state.transactions.filter(function (t) { return t.date >= startStr && t.date < endExclusive; });
-  }
+  function patternsWindowStart(sel) { return periodsDomain.patternsWindowStart(sel); }
+  function patternsPriorWindowRange(sel) { return periodsDomain.patternsPriorWindowRange(sel); }
+  function txSince(startStr) { return periodsDomain.txSince(state.transactions, startStr); }
+  function txInRange(startStr, endExclusive) { return periodsDomain.txInRange(state.transactions, startStr, endExclusive); }
 
   function groupTxByCategory(txs) {
     var out = {};

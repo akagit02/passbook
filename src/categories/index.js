@@ -1,6 +1,10 @@
 // Categories and payment method domain.
 // Definitions, lookups, and classifiers for expense categories and payment methods.
 
+// `discretionary` marks the categories the "where you could cut" analysis is
+// allowed to suggest trimming. Everything without it is treated as a cost
+// you can't simply decide to stop paying — it also forms the "essential
+// spend" figure the emergency-fund target is sized against.
 export const CATEGORIES = [
   { id: "housing", label: "Housing" },
   { id: "groceries", label: "Groceries" },
@@ -48,13 +52,5 @@ export const CARD_ALIASES = { PCC: { id: "premium", label: /premium/i }, RCC: { 
 export function vehicleFor(id) { return VEHICLE_BY_ID[id] || VEHICLE_BY_ID.other; }
 
 export function isSavingsTx(t) { return t.categoryId === SAVINGS_CAT; }
-
-export function isCardTransaction(t, creditCards) {
-  var alias = CARD_ALIASES[t.paymentMethod];
-  if (!alias) return false;
-  var byId = creditCards.filter(function (c) { return c.id === alias.id; })[0];
-  if (byId) return true;
-  return creditCards.filter(function (c) { return alias.label.test(c.label); }).length > 0;
-}
 
 export function spendingTxs(txs) { return txs.filter(function (t) { return !isSavingsTx(t); }); }
