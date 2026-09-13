@@ -5,13 +5,14 @@
 // pure functions, so the rendering/wiring code below didn't need to change.
 
 import { todayStr, shiftMonth, esc, genId, nextOccurrence } from "./lib/index.js";
-import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY, vehicleFor, isSavingsTx, spendingTxs } from "./categories/index.js";
+import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, vehicleFor, spendingTxs } from "./categories/index.js";
 import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
 import * as recurringDomain from "./recurring/index.js";
 import * as patternsDomain from "./patterns/index.js";
 import * as insightsDomain from "./insights/index.js";
+import * as savingsDomain from "./savings/index.js";
 
 export async function boot() {
   "use strict";
@@ -868,128 +869,18 @@ export async function boot() {
     if (editingRecurring) { renderRecurringEditForm(); } else { renderRecurring(); }
   }
 
-  // ---------- savings: shared calculations ----------
+  // ---------- savings: shared calculations (src/savings) ----------
 
-  function median(nums) {
-    if (!nums.length) return 0;
-    var s = nums.slice().sort(function (a, b) { return a - b; });
-    var mid = Math.floor(s.length / 2);
-    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-  }
-
-  // The UK tax year runs 6 April to 5 April, and the ISA allowance resets with
-  // it — an unused allowance doesn't roll over, which is the whole reason this
-  // is worth showing.
-  function taxYearRange(d) {
-    d = d || new Date();
-    var boundary = new Date(d.getFullYear(), TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY);
-    var startYear = d >= boundary ? d.getFullYear() : d.getFullYear() - 1;
-    var end = new Date(startYear + 1, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY);
-    return {
-      start: todayStr(new Date(startYear, TAX_YEAR_START_MONTH, TAX_YEAR_START_DAY)),
-      end: todayStr(end),
-      endDate: end,
-      label: startYear + "/" + String((startYear + 1) % 100).padStart(2, "0")
-    };
-  }
+  var sumAmounts = savingsDomain.sumAmounts;
+  var taxYearRange = savingsDomain.taxYearRange;
 
   function contributionsInRange(startStr, endExclusiveStr) {
-    return state.savingsContributions.filter(function (c) {
-      return c.date >= startStr && c.date < endExclusiveStr;
-    });
+    return savingsDomain.contributionsInRange(state.savingsContributions, startStr, endExclusiveStr);
   }
-
-  function sumAmounts(rows) { return rows.reduce(function (s, r) { return s + r.amount; }, 0); }
-
-  function savedTowards(goalId) {
-    return sumAmounts(state.savingsContributions.filter(function (c) { return c.goalId === goalId; }));
-  }
-
-  // Totals for the last `months` *complete* calendar months, oldest first. The
-  // current month is deliberately left out — it's only part-way through, and
-  // including it would drag every average down and make spending look like
-  // it's falling every time you check early in the month.
-  function monthlyTotals(months, predicate) {
-    var now = new Date();
-    var out = [];
-    for (var i = months; i >= 1; i--) {
-      var from = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      var to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      var startStr = todayStr(from), endStr = todayStr(to);
-      var total = 0;
-      state.transactions.forEach(function (t) {
-        if (t.date >= startStr && t.date < endStr && predicate(t)) total += t.amount;
-      });
-      out.push(total);
-    }
-    return out;
-  }
-
-  function categoryMonthlyTotals(catId, months) {
-    return monthlyTotals(months, function (t) { return t.categoryId === catId; });
-  }
-
-  // What it costs to simply keep going: everything that isn't discretionary
-  // and isn't a savings transfer. This is what an emergency fund is sized
-  // against — three to six months of *this*, not of total outgoings.
-  function medianEssentialMonthly() {
-    return median(monthlyTotals(6, function (t) {
-      var cat = CATEGORIES[CAT_INDEX[t.categoryId]];
-      return cat && !cat.discretionary && !isSavingsTx(t);
-    }));
-  }
-
-  function medianMonthlySavings() {
-    return median(monthlyTotals(6, isSavingsTx));
-  }
-
-  // Leftover for each of the last `n` complete pay cycles, so goal pacing can
-  // be checked against what actually tends to be spare rather than against
-  // income on paper.
-  function medianMonthlyLeftover(n) {
-    if (state.income == null) return null;
-    var vals = [];
-    var mk = currentPeriodKey();
-    for (var i = 1; i <= n; i++) {
-      var m = shiftMonth(mk, -i);
-      var start = periodStartStr(m), end = periodEndStr(m);
-      var txs = state.transactions.filter(function (t) { return t.date >= start && t.date < end; });
-      var fin = cycleFinancials(txs, start, end);
-      if (fin.leftover != null) vals.push(fin.leftover);
-    }
-    return vals.length ? median(vals) : null;
-  }
-
-  function monthsBetween(fromStr, toStr) {
-    var a = new Date(fromStr + "T00:00:00"), b = new Date(toStr + "T00:00:00");
-    return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + (b.getDate() - a.getDate()) / 30.4;
-  }
-
-  function goalProgress(g) {
-    var saved = savedTowards(g.id);
-    var remaining = Math.max(0, g.targetAmount - saved);
-    var monthsLeft = monthsBetween(todayStr(), g.targetDate);
-    var requiredMonthly = remaining <= 0 ? 0 : monthsLeft <= 0 ? remaining : remaining / monthsLeft;
-    var contribs = state.savingsContributions.filter(function (c) { return c.goalId === g.id; });
-    var actualMonthly = median(monthlyTotals(6, function (t) {
-      return contribs.some(function (c) { return c.transactionId === t.id; });
-    }));
-    // A goal set last week has no pace yet — judging it against a six-month
-    // median would call every new goal "behind" on the day it's created, which
-    // is noise rather than information.
-    var monthsElapsed = monthsBetween(g.startDate, todayStr());
-    return {
-      saved: saved,
-      remaining: remaining,
-      pct: g.targetAmount > 0 ? Math.min(100, (saved / g.targetAmount) * 100) : 0,
-      monthsLeft: monthsLeft,
-      requiredMonthly: requiredMonthly,
-      actualMonthly: actualMonthly,
-      complete: remaining <= 0,
-      overdue: monthsLeft <= 0 && remaining > 0,
-      tooNew: monthsElapsed < 2
-    };
-  }
+  function medianEssentialMonthly() { return savingsDomain.medianEssentialMonthly(state.transactions); }
+  function medianMonthlySavings() { return savingsDomain.medianMonthlySavings(state.transactions); }
+  function medianMonthlyLeftover(n) { return savingsDomain.medianMonthlyLeftover(n, state); }
+  function goalProgress(g) { return savingsDomain.goalProgress(g, state.savingsContributions, state.transactions); }
 
   // ---------- savings: rendering ----------
 
@@ -1159,21 +1050,12 @@ export async function boot() {
       return;
     }
 
-    var byVehicle = {};
-    state.savingsContributions.forEach(function (c) {
-      byVehicle[c.vehicle] = (byVehicle[c.vehicle] || 0) + c.amount;
-    });
-    var rows = Object.keys(byVehicle).map(function (id) {
-      return { vehicle: vehicleFor(id), amount: byVehicle[id] };
-    }).sort(function (a, b) { return b.amount - a.amount; });
-
+    var rows = savingsDomain.holdingsByVehicle(state.savingsContributions);
     var total = sumAmounts(state.savingsContributions);
     var max = rows[0].amount;
 
-    var byTier = {};
-    rows.forEach(function (r) { byTier[r.vehicle.tier] = (byTier[r.vehicle.tier] || 0) + r.amount; });
-    var tierSummary = ["cash", "low", "growth", "other"].filter(function (t) { return byTier[t]; }).map(function (t) {
-      return TIER_LABELS[t] + " " + Math.round((byTier[t] / total) * 100) + "%";
+    var tierSummary = savingsDomain.tierSplit(rows, total).map(function (s) {
+      return TIER_LABELS[s.tier] + " " + s.pct + "%";
     }).join(" · ");
 
     el.innerHTML = rows.map(function (r) {
@@ -1194,9 +1076,7 @@ export async function boot() {
     var ty = taxYearRange();
     document.getElementById("isa-year-label").textContent = ty.label;
 
-    var used = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) {
-      return vehicleFor(c.vehicle).isa;
-    }));
+    var used = savingsDomain.taxYearIsaSplit(state.savingsContributions, ty).isaUsed;
     var remaining = Math.max(0, ISA_ANNUAL_ALLOWANCE - used);
     var pct = Math.min(100, (used / ISA_ANNUAL_ALLOWANCE) * 100);
     var daysLeft = Math.max(0, Math.ceil((ty.endDate - new Date()) / 86400000));
@@ -1304,39 +1184,9 @@ export async function boot() {
 
   // ---------- savings: where you could cut ----------
 
-  // How much of a category a suggestion assumes you'd actually give up. A
-  // quarter is deliberately modest — the point is a number you might really
-  // hit, not the fantasy one you get by assuming eating out drops to zero.
-  var TRIM_FRACTION = 0.25;
-  var SUBSCRIPTION_REVIEW_MAX = 20;
+  var SUBSCRIPTION_REVIEW_MAX = savingsDomain.SUBSCRIPTION_REVIEW_MAX;
 
-  function cutCandidates() {
-    var now = new Date();
-    var freqFrom = todayStr(new Date(now.getFullYear(), now.getMonth() - 3, 1));
-    var freqTo = todayStr(new Date(now.getFullYear(), now.getMonth(), 1));
-
-    return CATEGORIES.filter(function (c) { return c.discretionary; }).map(function (cat) {
-      var totals = categoryMonthlyTotals(cat.id, 6);
-      // Median rather than mean: one Christmas or one holiday shouldn't become
-      // the baseline you're told to cut from.
-      var base = median(totals);
-      var last = totals[totals.length - 1];
-      var recent = state.transactions.filter(function (t) {
-        return t.categoryId === cat.id && t.date >= freqFrom && t.date < freqTo;
-      });
-      return {
-        cat: cat,
-        base: base,
-        last: last,
-        perMonth: recent.length / 3,
-        avgAmount: recent.length ? recent.reduce(function (s, t) { return s + t.amount; }, 0) / recent.length : 0,
-        trim: base * TRIM_FRACTION,
-        overshoot: base > 0 && last > base * 1.15 && last - base >= 20 ? last - base : 0
-      };
-    // Anything whose realistic trim is under a fiver a month isn't worth the
-    // reader's attention — it just crowds out the suggestions that matter.
-    }).filter(function (r) { return r.trim >= 5; }).sort(function (a, b) { return b.base - a.base; });
-  }
+  function cutCandidates() { return savingsDomain.cutCandidates(state.transactions); }
 
   function renderCutAnalysis() {
     var el = document.getElementById("savings-cuts");
@@ -1418,12 +1268,7 @@ export async function boot() {
       }
     }
 
-    // The buffer has to be money you can actually reach this week — cash and
-    // capital-preservation holdings only. A stocks ISA is not an emergency fund.
-    var buffer = sumAmounts(state.savingsContributions.filter(function (c) {
-      var tier = vehicleFor(c.vehicle).tier;
-      return tier === "cash" || tier === "low";
-    }));
+    var buffer = savingsDomain.reachableBuffer(state.savingsContributions);
     var bufferMin = essential * 3;
     var bufferMax = essential * 6;
     var bufferReady = buffer >= bufferMin;
@@ -1491,11 +1336,9 @@ export async function boot() {
       "the tax saved by using an ISA or pension wrapper at all, and clearing debt that charges more than a safe account pays.");
 
     var ty = taxYearRange();
-    var isaUsed = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) { return vehicleFor(c.vehicle).isa; }));
-    var outsideIsa = sumAmounts(contributionsInRange(ty.start, ty.end).filter(function (c) {
-      var v = vehicleFor(c.vehicle);
-      return !v.isa && (v.tier === "growth" || v.tier === "cash");
-    }));
+    var isaSplit = savingsDomain.taxYearIsaSplit(state.savingsContributions, ty);
+    var isaUsed = isaSplit.isaUsed;
+    var outsideIsa = isaSplit.outsideIsa;
     if (outsideIsa > 0 && isaUsed < ISA_ANNUAL_ALLOWANCE) {
       cards.push("You've put " + fmtMoney(outsideIsa) + " outside an ISA this tax year with " +
         fmtMoney(ISA_ANNUAL_ALLOWANCE - isaUsed) + " of allowance still unused. Same money, same investments, less tax on the interest and gains — and the unused allowance disappears on 5 April.");
