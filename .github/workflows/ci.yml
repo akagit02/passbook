@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [refactor/modular-architecture]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  # Only runs once the repo owner has added these secrets, pointing at the
+  # separate TEST Supabase project — see docs/REFACTOR_PLAN.md Phase 0
+  # (§0.2/§0.6). Never point these at production: tests/e2e/global-setup.js
+  # also refuses to run against the known production project ref as a second
+  # line of defense, but that check only works because config.js is built
+  # from these exact secrets in the first place.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: lint-and-unit
+    if: ${{ vars.E2E_ENABLED == 'true' }}
+    env:
+      PASSBOOK_SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
+      PASSBOOK_SUPABASE_ANON_KEY: ${{ secrets.TEST_SUPABASE_ANON_KEY }}
+      TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+      TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
