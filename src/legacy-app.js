@@ -1915,9 +1915,15 @@ export async function boot() {
   }
 
   // Current period plus the next 5, so a planned item can optionally be
-  // set aside for a future pay period rather than only "right now".
+  // set aside for a future pay period rather than only "right now". Must run
+  // after loadAll() has populated state.incomeSources — cycleStartDay()
+  // defaults to day 1 on an empty list, so calling this before sign-in would
+  // compute the wrong "current period" for anyone whose actual payday isn't
+  // the 1st. Rebuilds from scratch each call since showApp() (and so this)
+  // can run more than once per page load (sign out, then sign in again).
   function populatePlannedPeriodSelect() {
     var sel = document.getElementById("p-period");
+    sel.innerHTML = "";
     var pk = currentPeriodKey();
     for (var i = 0; i <= 5; i++) {
       var mk = shiftMonth(pk, i);
@@ -2367,6 +2373,7 @@ export async function boot() {
       showBanner();
     }
     viewMonth = currentPeriodKey();
+    populatePlannedPeriodSelect();
     rolloverPlannedItems();
     var generated = generateRecurringTransactions();
     if (generated.length) dbCall(sb.from("transactions").insert(generated.map(txToRow)));
@@ -2521,7 +2528,6 @@ export async function boot() {
     populateCategorySelect("f-category");
     populateCategorySelect("p-category");
     populateCategorySelect("rec-category");
-    populatePlannedPeriodSelect();
     wireForm();
     wirePlannedForm();
     wireSavingsForm();
