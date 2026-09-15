@@ -14,6 +14,7 @@ import * as patternsDomain from "./patterns/index.js";
 import * as insightsDomain from "./insights/index.js";
 import * as savingsDomain from "./savings/index.js";
 import * as debtsDomain from "./debts/index.js";
+import * as healthDomain from "./health/index.js";
 
 export async function boot() {
   "use strict";
@@ -47,7 +48,8 @@ export async function boot() {
     savingsContributions: [],
     savingsGoals: [],
     debts: [],
-    debtPayments: []
+    debtPayments: [],
+    healthThresholds: healthDomain.normaliseThresholds(null)
   };
   var viewMonth = null;
   var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
@@ -57,7 +59,7 @@ export async function boot() {
   var recurringListExpanded = false;
   var breakdownExpanded = false;
   var patternsExpanded = false;
-  var currentView = "home"; // "home" | "savings" | "debt"
+  var currentView = "home"; // "home" | "savings" | "debt" | "health"
   var showingGoalForm = false;
   var goalSliderTouched = false; // true once the user has dragged the slider by hand this time round
   var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
@@ -1513,6 +1515,302 @@ export async function boot() {
     });
   }
 
+  // ---------- financial health (src/health) ----------
+
+  var healthWindow = { count: 6 }; // { count: n } = last n complete pay periods; { from, to } = custom inclusive range
+  var editingHealthTargets = false;
+
+  var HEALTH_TITLES = {
+    savingsRate: "Savings rate",
+    bufferMonths: "Emergency buffer",
+    withinMeans: "Living within means",
+    debtLoad: "Debt load",
+    cardDiscipline: "Card discipline",
+    fixedCommitments: "Fixed commitments"
+  };
+  var HEALTH_TARGET_HELP = {
+    savingsRate: "% of income put aside",
+    bufferMonths: "months of essentials in easy-access savings",
+    withinMeans: "% of pay periods under budget",
+    debtLoad: "% of income on debt repayments",
+    fixedCommitments: "% of income on direct debits"
+  };
+  // Colour is never the only signal — every dot has a word next to it.
+  var HEALTH_STATE_LABELS = { green: "Good", amber: "Watch", red: "Act now", neutral: "No data" };
+  var HEALTH_VERDICTS = {
+    healthy: { cls: "green", title: "Healthy" },
+    okay: { cls: "amber", title: "Okay" },
+    attention: { cls: "red", title: "Needs attention" },
+    neutral: { cls: "neutral", title: "Not enough data yet" }
+  };
+
+  function healthValueText(key, v) {
+    if (key === "bufferMonths") return v + (v === 1 ? " month" : " months");
+    if (key === "withinMeans") return v + "% of periods";
+    return v + "%";
+  }
+
+  function healthTargetText(key, green) {
+    return (healthDomain.HIGHER_IS_BETTER[key] ? "target at least " : "target at most ") + healthValueText(key, green);
+  }
+
+  function healthTrendText(cur, prev) {
+    if (prev == null) return "";
+    if (cur === prev) return " · same as the window before";
+    return " · " + (cur > prev ? "↑" : "↓") + " from " + prev + "% the window before";
+  }
+
+  function shortDateLabel(dateStr) {
+    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  }
+
+  // Turns a domain row (numbers only) into the figure, explanation and
+  // "to reach green" line shown on the page.
+  function healthRowParts(r) {
+    var noIncome = "Add your monthly income on Home to measure this.";
+    var noData = "Nothing logged in this window yet.";
+
+    if (r.key === "savingsRate") {
+      if (r.status === "neutral") return { figure: "—", sub: r.reason === "no-income" ? noIncome : noData };
+      return {
+        figure: r.pct + "%",
+        sub: fmtMoney(r.avgSaved) + " put aside a period on average, against " + fmtMoney(state.income) + " income · " +
+          healthTargetText(r.key, r.target.green) + healthTrendText(r.pct, r.prevPct),
+        hint: r.toGreen ? "Put aside " + fmtMoney(r.toGreen) + " more a month to reach " + r.target.green + "%." : ""
+      };
+    }
+
+    if (r.key === "bufferMonths") {
+      if (r.status === "neutral") return { figure: "—", sub: "Log a few months of spending so this can size your essentials." };
+      return {
+        figure: r.months.toFixed(1) + " months",
+        sub: fmtMoney(r.buffer) + " in easy-access savings against " + fmtMoney(r.essential) + "/mo of essentials · " +
+          healthTargetText(r.key, r.target.green),
+        hint: r.toGreen ? "Add " + fmtMoney(r.toGreen) + " to easy-access savings to reach " + healthValueText(r.key, r.target.green) + "." : ""
+      };
+    }
+
+    if (r.key === "withinMeans") {
+      if (r.status === "neutral") return { figure: "—", sub: r.reason === "no-income" ? noIncome : noData };
+      var overs = r.overs.slice(0, 3).map(function (o) { return monthShortLabel(o.key) + " (" + fmtMoney(o.amount) + ")"; }).join(", ");
+      if (r.overs.length > 3) overs += " and " + (r.overs.length - 3) + " more";
+      return {
+        figure: r.under + " of " + r.total + " periods",
+        sub: (r.overs.length ? "Over budget in " + overs : "Under budget every period") + " · " +
+          healthTargetText(r.key, r.target.green) + healthTrendText(r.pct, r.prevPct),
+        hint: r.toGreen ? "When you went over it was by " + fmtMoney(r.toGreen) + " on average — trimming that much in those periods closes the gap." : ""
+      };
+    }
+
+    if (r.key === "debtLoad") {
+      if (r.status === "neutral") return { figure: "—", sub: noIncome };
+      var parts = [];
+      if (!r.count) {
+        parts.push("No debts being repaid");
+      } else {
+        parts.push(fmtMoney(r.monthly) + "/mo in repayments");
+        parts.push(fmtMoney(r.totalLeft) + " left across " + r.count + (r.count === 1 ? " debt" : " debts"));
+        if (r.payoff) parts.push("clear by ~" + monthShortLabel(r.payoff) + (r.payoffUnknown ? " (some dates unknown)" : ""));
+      }
+      var debtSub = parts.join(" · ") + " · " + healthTargetText(r.key, r.target.green);
+      if (r.outsideLedgerCount) {
+        debtSub += ". Includes " + r.outsideLedgerCount + (r.outsideLedgerCount === 1 ? " debt" : " debts") +
+          " your employer deducts — left out of the % because your income is already after them.";
+      }
+      return {
+        figure: r.pct + "% of income",
+        sub: debtSub,
+        hint: r.toGreen
+          ? "Clearing " + r.toGreen.label + " (" + fmtMoney(r.toGreen.remaining) + " left) would bring this to " + r.toGreen.pctAfter + "%" +
+            (r.toGreen.reachesGreen ? "." : " — the biggest single step, though still above target.")
+          : ""
+      };
+    }
+
+    if (r.key === "cardDiscipline") {
+      if (r.status === "red") {
+        var list = r.overdue.map(function (o) { return o.cardLabel + " " + fmtMoney(o.amount) + " (due " + shortDateLabel(o.dueDate) + ")"; }).join(", ");
+        return {
+          figure: r.overdue.length + " overdue",
+          sub: "Unpaid past the due date: " + list + ".",
+          hint: "Pay " + fmtMoney(r.overdueTotal) + " now — card interest usually costs far more than savings earn."
+        };
+      }
+      if (r.status === "amber") {
+        return {
+          figure: r.lateCount + " paid late",
+          sub: r.lateCount + " of " + r.dueCount + " statements due in this window were paid after the due date.",
+          hint: "Pay each statement by its due date — the money calendar on Home shows what's coming up."
+        };
+      }
+      if (r.status === "green") {
+        return {
+          figure: "On time",
+          sub: r.dueCount === 1 ? "The statement due in this window was paid on time." : "All " + r.dueCount + " statements due in this window were paid on time."
+        };
+      }
+      return { figure: "—", sub: "No card statements were due in this window." };
+    }
+
+    // fixedCommitments
+    if (r.status === "neutral") return { figure: "—", sub: noIncome };
+    return {
+      figure: r.pct + "% of income",
+      sub: fmtMoney(r.total) + "/mo across " + r.count + (r.count === 1 ? " direct debit" : " direct debits") +
+        ", committed before the month starts · " + healthTargetText(r.key, r.target.green),
+      hint: r.toGreen ? "Trim " + fmtMoney(r.toGreen) + " a month of direct debits to get to " + r.target.green + "%." : ""
+    };
+  }
+
+  function renderHealthView() {
+    var h = healthDomain.computeHealth(state, healthWindow, state.healthThresholds);
+    var custom = !!healthWindow.from;
+
+    document.querySelectorAll(".health-win-btn").forEach(function (btn) {
+      var active = btn.dataset.win === "custom" ? custom : !custom && String(healthWindow.count) === btn.dataset.win;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    document.getElementById("health-custom").hidden = !custom;
+
+    var startD = new Date(h.range.start + "T00:00:00");
+    var endD = new Date(h.range.end + "T00:00:00");
+    endD.setDate(endD.getDate() - 1);
+    var rangeLabel = periodsDomain.dateRangeLabel(startD, endD);
+    if (h.includesCurrent) rangeLabel += " · includes the current, unfinished period";
+    if (h.usableCount && h.usableCount < h.keys.length) {
+      rangeLabel += " · you've logged " + h.usableCount + " of these " + h.keys.length + " periods";
+    }
+    document.getElementById("health-range-label").textContent = rangeLabel;
+
+    var v = HEALTH_VERDICTS[h.verdict.level];
+    var counts = [];
+    if (h.verdict.green) counts.push(h.verdict.green + " good");
+    if (h.verdict.amber) counts.push(h.verdict.amber + " to watch");
+    if (h.verdict.red) counts.push(h.verdict.red + " to act on");
+    var verdictEl = document.getElementById("health-verdict");
+    verdictEl.className = "health-verdict health-" + v.cls;
+    verdictEl.innerHTML = '<span class="health-dot" aria-hidden="true"></span><span><strong>' + esc(v.title) + "</strong>" +
+      (counts.length ? " — " + esc(counts.join(", ")) : "") + "</span>";
+
+    document.getElementById("health-rows").innerHTML = h.rows.map(function (r) {
+      var p = healthRowParts(r);
+      return (
+        '<div class="health-row health-' + r.status + '" data-metric="' + r.key + '">' +
+        '<span class="health-dot" aria-hidden="true"></span>' +
+        '<div class="health-main">' +
+        '<div class="health-top"><span class="health-title">' + esc(HEALTH_TITLES[r.key]) + "</span>" +
+        '<span class="health-figure">' + esc(p.figure) + '<span class="health-state">' + HEALTH_STATE_LABELS[r.status] + "</span></span></div>" +
+        '<div class="health-sub">' + esc(p.sub) + "</div>" +
+        (p.hint ? '<div class="health-hint"><strong>To reach green:</strong> ' + esc(p.hint) + "</div>" : "") +
+        "</div></div>"
+      );
+    }).join("");
+
+    renderHealthTargets();
+  }
+
+  function renderHealthTargets() {
+    var el = document.getElementById("health-targets");
+    var t = state.healthThresholds;
+    document.getElementById("health-targets-toggle").textContent = editingHealthTargets ? "Cancel" : "Edit";
+
+    if (!editingHealthTargets) {
+      el.innerHTML = healthDomain.METRIC_KEYS.map(function (key) {
+        var word = healthDomain.HIGHER_IS_BETTER[key] ? "at least " : "at most ";
+        return '<div class="health-target-line"><span>' + esc(HEALTH_TITLES[key]) + "</span><span>" +
+          esc("green " + word + healthValueText(key, t[key].green) + " · amber " + word + healthValueText(key, t[key].amber)) +
+          "</span></div>";
+      }).join("");
+      return;
+    }
+
+    el.innerHTML =
+      '<form id="health-targets-form" class="health-targets-form" novalidate>' +
+      healthDomain.METRIC_KEYS.map(function (key) {
+        var word = healthDomain.HIGHER_IS_BETTER[key] ? "at least" : "at most";
+        return (
+          '<fieldset class="health-target-edit"><legend>' + esc(HEALTH_TITLES[key]) +
+          ' <span class="opt">(' + esc(HEALTH_TARGET_HELP[key]) + ")</span></legend>" +
+          "<label>Green " + word + ' <input type="number" inputmode="decimal" step="any" min="0" name="' + key + '-green" value="' + t[key].green + '" /></label>' +
+          "<label>Amber " + word + ' <input type="number" inputmode="decimal" step="any" min="0" name="' + key + '-amber" value="' + t[key].amber + '" /></label>' +
+          "</fieldset>"
+        );
+      }).join("") +
+      '<p class="health-target-error" id="health-target-error" role="alert" hidden></p>' +
+      '<div class="health-target-actions"><button type="submit" class="btn-primary">Save targets</button>' +
+      '<button type="button" class="link-btn" id="health-targets-reset">Reset to defaults</button></div>' +
+      "</form>";
+
+    document.getElementById("health-targets-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var form = e.target;
+      var next = {};
+      var bad = [];
+      healthDomain.METRIC_KEYS.forEach(function (key) {
+        var g = parseFloat(form.elements[key + "-green"].value);
+        var a = parseFloat(form.elements[key + "-amber"].value);
+        if (!healthDomain.validThresholdPair(key, g, a)) bad.push(HEALTH_TITLES[key]);
+        next[key] = { green: g, amber: a };
+      });
+      if (bad.length) {
+        var err = document.getElementById("health-target-error");
+        err.textContent = "Check " + bad.join(", ") + ": use numbers of 0 or more, with green no worse than amber.";
+        err.hidden = false;
+        return;
+      }
+      saveHealthThresholds(next);
+    });
+    document.getElementById("health-targets-reset").addEventListener("click", function () {
+      saveHealthThresholds(healthDomain.DEFAULT_THRESHOLDS);
+    });
+  }
+
+  // Saved on its own rather than folded into the income upsert, so that on a
+  // database where the health_thresholds column hasn't been added yet only
+  // this save fails (with the usual sync banner) — income keeps saving fine.
+  function saveHealthThresholds(t) {
+    state.healthThresholds = healthDomain.normaliseThresholds(t);
+    editingHealthTargets = false;
+    renderAll();
+    dbCall(sb.from("settings").upsert({ user_id: currentUserId, health_thresholds: state.healthThresholds }, { onConflict: "user_id" }));
+  }
+
+  function populateHealthRangeSelects() {
+    var keys = healthDomain.selectablePeriodKeys(state);
+    var optionsHtml = keys.map(function (mk) { return '<option value="' + esc(mk) + '">' + esc(periodLabel(mk)) + "</option>"; }).join("");
+    var from = document.getElementById("health-from");
+    var to = document.getElementById("health-to");
+    from.innerHTML = optionsHtml;
+    to.innerHTML = optionsHtml;
+    from.value = healthWindow.from && keys.indexOf(healthWindow.from) !== -1 ? healthWindow.from : keys[Math.max(0, keys.length - 6)];
+    to.value = healthWindow.to && keys.indexOf(healthWindow.to) !== -1 ? healthWindow.to : keys[keys.length - 1];
+  }
+
+  function wireHealth() {
+    document.querySelectorAll(".health-win-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.dataset.win === "custom") {
+          populateHealthRangeSelects();
+          healthWindow = { from: document.getElementById("health-from").value, to: document.getElementById("health-to").value };
+        } else {
+          healthWindow = { count: parseInt(btn.dataset.win, 10) };
+        }
+        renderHealthView();
+      });
+    });
+    ["health-from", "health-to"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", function () {
+        healthWindow = { from: document.getElementById("health-from").value, to: document.getElementById("health-to").value };
+        renderHealthView();
+      });
+    });
+    document.getElementById("health-targets-toggle").addEventListener("click", function () {
+      editingHealthTargets = !editingHealthTargets;
+      renderHealthTargets();
+    });
+  }
+
   function renderAll() {
     renderMonthLabel();
     renderCardReminders();
@@ -1526,6 +1824,7 @@ export async function boot() {
     renderRecurringPanel();
     if (currentView === "savings") renderSavingsView();
     if (currentView === "debt") renderDebtView();
+    if (currentView === "health") renderHealthView();
   }
 
   // The app is a single page with one section visible at a time rather than a
@@ -1537,11 +1836,13 @@ export async function boot() {
     document.getElementById("view-home").hidden = name !== "home";
     document.getElementById("view-savings").hidden = name !== "savings";
     document.getElementById("view-debt").hidden = name !== "debt";
+    document.getElementById("view-health").hidden = name !== "health";
     document.querySelector(".month-nav").hidden = name !== "home";
     document.getElementById("range-form").hidden = true;
     document.getElementById("nav-home").classList.toggle("active", name === "home");
     document.getElementById("nav-savings").classList.toggle("active", name === "savings");
     document.getElementById("nav-debt").classList.toggle("active", name === "debt");
+    document.getElementById("nav-health").classList.toggle("active", name === "health");
     closeSideNav();
     renderAll();
   }
@@ -1722,7 +2023,10 @@ export async function boot() {
       savingsContributions: (results[7].data || []).map(rowToContribution),
       savingsGoals: (results[8].data || []).map(rowToGoal),
       debts: (results[9].data || []).map(rowToDebt),
-      debtPayments: (results[10].data || []).map(rowToDebtPayment)
+      debtPayments: (results[10].data || []).map(rowToDebtPayment),
+      // A database without the health_thresholds column yet just returns no
+      // such field here — the defaults cover it.
+      healthThresholds: healthDomain.normaliseThresholds(settingsRow && settingsRow.health_thresholds)
     };
   }
 
@@ -2513,6 +2817,7 @@ export async function boot() {
     document.getElementById("nav-home").addEventListener("click", function () { showView("home"); });
     document.getElementById("nav-savings").addEventListener("click", function () { showView("savings"); });
     document.getElementById("nav-debt").addEventListener("click", function () { showView("debt"); });
+    document.getElementById("nav-health").addEventListener("click", function () { showView("health"); });
     document.getElementById("nav-profile").addEventListener("click", openProfileModal);
     document.getElementById("profile-close").addEventListener("click", closeProfileModal);
     document.getElementById("profile-overlay").addEventListener("click", closeProfileModal);
@@ -2532,6 +2837,7 @@ export async function boot() {
     wirePlannedForm();
     wireSavingsForm();
     wireDebtForms();
+    wireHealth();
     wireGoalForm();
     wireSavingsFilters();
     wireCalendarEdit();

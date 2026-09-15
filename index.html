@@ -707,6 +707,102 @@
   .debt-payment-row span:first-child { flex: 1; }
   .debt-payment-row .link-btn { font-family: var(--font-body); }
 
+  /* financial health */
+  .health-range { margin: -6px 0 12px; line-height: 1.5; }
+  .health-window { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .health-win-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    min-height: 34px;
+    cursor: pointer;
+  }
+  .health-win-btn:hover { border-color: var(--brass); }
+  .health-win-btn.active { background: var(--brass-tint); border-color: var(--brass); color: var(--brass-deep); font-weight: 600; }
+  .health-custom { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 12px; }
+  .health-custom[hidden] { display: none; }
+  .health-verdict {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--paper-sunken);
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+  }
+  .health-verdict strong { font-weight: 600; }
+  .health-rows { display: flex; flex-direction: column; }
+  .health-row {
+    display: grid;
+    grid-template-columns: 12px 1fr;
+    gap: 12px;
+    padding: 12px 2px;
+    border-bottom: 1px solid var(--line);
+  }
+  .health-row:last-child { border-bottom: none; }
+  .health-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-faint); margin-top: 5px; flex: none; }
+  .health-verdict .health-dot { margin-top: 0; }
+  .health-green .health-dot { background: var(--positive); }
+  .health-amber .health-dot { background: var(--brass); }
+  .health-red .health-dot { background: var(--negative); }
+  .health-main { min-width: 0; }
+  .health-top { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+  .health-title { font-weight: 500; font-size: 0.92rem; }
+  .health-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+  .health-state {
+    font-family: var(--font-body);
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    margin-left: 8px;
+  }
+  .health-green .health-state { color: var(--positive); }
+  .health-red .health-state { color: var(--negative); }
+  .health-amber .health-state { color: var(--brass-deep); }
+  .health-sub { font-size: 0.8rem; color: var(--ink-soft); margin-top: 3px; line-height: 1.45; }
+  .health-hint { font-size: 0.8rem; margin-top: 6px; line-height: 1.45; padding: 7px 10px; border-radius: var(--radius-sm); background: var(--paper-sunken); }
+  .health-hint strong { font-weight: 600; }
+  .health-target-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px 12px;
+    flex-wrap: wrap;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.85rem;
+  }
+  .health-target-line:last-child { border-bottom: none; }
+  .health-target-line span:last-child { color: var(--ink-soft); font-family: var(--font-mono); font-size: 0.78rem; }
+  .health-targets-form { display: flex; flex-direction: column; gap: 12px; }
+  .health-target-edit {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px 12px;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+  .health-target-edit legend { font-size: 0.85rem; font-weight: 500; padding: 0 4px; }
+  .health-target-edit .opt { color: var(--ink-faint); font-weight: 400; }
+  .health-target-edit label { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--ink-soft); }
+  .health-target-edit input {
+    width: 5.5em;
+    padding: 7px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .health-target-error { color: var(--negative); font-size: 0.8rem; margin: 0; }
+  .health-target-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
   /* holdings + ISA meter */
   .holding-row { padding: 8px 0; }
   .holding-top {
@@ -974,6 +1070,7 @@
   <button type="button" class="side-nav-item" id="nav-home">🏠 Home</button>
   <button type="button" class="side-nav-item" id="nav-savings">🏦 Savings</button>
   <button type="button" class="side-nav-item" id="nav-debt">💳 Debt</button>
+  <button type="button" class="side-nav-item" id="nav-health">🩺 Financial health</button>
   <button type="button" class="side-nav-item" id="nav-profile">👤 Profile</button>
 </nav>
 
@@ -1406,6 +1503,45 @@
     </div>
 
   </div><!-- /view-debt -->
+
+  <div id="view-health" class="view" hidden>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Financial health</h2>
+      </div>
+      <p class="panel-sub health-range" id="health-range-label"></p>
+      <div class="health-window" role="group" aria-label="Time window">
+        <button type="button" class="health-win-btn" data-win="3">Last 3 periods</button>
+        <button type="button" class="health-win-btn" data-win="6">Last 6</button>
+        <button type="button" class="health-win-btn" data-win="12">Last 12</button>
+        <button type="button" class="health-win-btn" data-win="custom">Custom</button>
+      </div>
+      <div class="health-custom" id="health-custom" hidden>
+        <div class="field">
+          <label for="health-from">From pay period</label>
+          <select id="health-from"></select>
+        </div>
+        <div class="field">
+          <label for="health-to">To pay period</label>
+          <select id="health-to"></select>
+        </div>
+      </div>
+      <div id="health-verdict" class="health-verdict"></div>
+      <div id="health-rows" class="health-rows"></div>
+      <p class="tips-disclaimer" style="margin-top:12px;">Arithmetic on what you've logged here, judged against the targets below — not personalised financial advice.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Targets</h2>
+        <button type="button" class="link-btn" id="health-targets-toggle">Edit</button>
+      </div>
+      <p class="panel-sub" style="margin:-6px 0 10px;">Where each measure turns green or amber — anything worse than amber is red. Card discipline isn't adjustable: any overdue statement is red.</p>
+      <div id="health-targets"></div>
+    </div>
+
+  </div><!-- /view-health -->
 
   <footer class="app-footer">
     <p>Private to your household</p>

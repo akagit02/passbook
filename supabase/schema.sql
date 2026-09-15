@@ -22,6 +22,12 @@ create table if not exists settings (
   income numeric
 );
 
+-- Financial health targets the user can edit: green/amber boundaries per
+-- measure (see src/health/index.js). Null means "use the defaults", and the
+-- app treats a missing column the same way, so reading keeps working on a
+-- database where this hasn't been run yet — only saving edited targets fails.
+alter table settings add column if not exists health_thresholds jsonb;
+
 -- ── income sources (paydays) ──
 create table if not exists income_sources (
   id text primary key,
