@@ -76,6 +76,17 @@ create table if not exists planned_expenses (
 );
 create index if not exists planned_expenses_user_idx on planned_expenses (user_id);
 
+-- `period_key` is a pay-cycle key ("YYYY-MM", same convention as the app's
+-- period domain — e.g. "2026-09" means the cycle starting on that month's
+-- payday). An unbought item whose period has passed gets bumped forward to
+-- the current period by the app so it keeps showing up instead of quietly
+-- aging out of view; a bought item keeps the period it was bought in.
+-- `bought` intentionally never creates a ledger transaction — the user adds
+-- that themselves — it only marks the item done with a bought_date.
+alter table planned_expenses add column if not exists period_key text;
+alter table planned_expenses add column if not exists bought boolean not null default false;
+alter table planned_expenses add column if not exists bought_date date;
+
 -- ── credit card statement balances (entered manually, tracked until paid) ──
 create table if not exists card_balances (
   id text primary key,
@@ -149,6 +160,41 @@ create table if not exists savings_contributions (
 create index if not exists savings_contributions_user_date_idx on savings_contributions (user_id, date);
 create index if not exists savings_contributions_goal_idx on savings_contributions (goal_id);
 
+-- ── debts tracked outside the ledger ──
+-- For a debt that predates this app (e.g. a store card already being paid
+-- off by direct debit before you started tracking it here), `original_amount`
+-- is the full amount ever owed and `starting_balance` is however much was
+-- already paid off before tracking began — so "how much is left" is
+-- original_amount - starting_balance - sum(debt_payments). Payments logged
+-- here deliberately never touch `transactions`: the money is deducted by a
+-- third party (an employer, say) outside this app's view of the ledger, so
+-- it must never affect "left over" or look like an expense here. Contrast
+-- with a direct debit that *is* already in the ledger (recurring_expenses
+-- with installment_total set) — that kind of debt needs no separate table,
+-- see src/recurring/index.js's installmentRemaining.
+create table if not exists debts (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  label text not null,
+  original_amount numeric not null,
+  starting_balance numeric not null default 0,
+  payment_day integer check (payment_day between 1 and 31),
+  active boolean not null default true,
+  created_at date not null default current_date
+);
+create index if not exists debts_user_idx on debts (user_id);
+
+create table if not exists debt_payments (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  debt_id text not null references debts(id) on delete cascade,
+  amount numeric not null,
+  date date not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists debt_payments_user_idx on debt_payments (user_id);
+create index if not exists debt_payments_debt_idx on debt_payments (debt_id);
+
 -- ── Row Level Security ──
 -- Each person only ever sees rows that belong to them. There is no "shared
 -- household" access here — if two people should see the same figures, that's
@@ -163,6 +209,8 @@ alter table card_balances enable row level security;
 alter table recurring_expenses enable row level security;
 alter table savings_goals enable row level security;
 alter table savings_contributions enable row level security;
+alter table debts enable row level security;
+alter table debt_payments enable row level security;
 
 drop policy if exists "own rows only" on settings;
 create policy "own rows only" on settings for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -191,6 +239,12 @@ create policy "own rows only" on savings_goals for all using (auth.uid() = user_
 drop policy if exists "own rows only" on savings_contributions;
 create policy "own rows only" on savings_contributions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+drop policy if exists "own rows only" on debts;
+create policy "own rows only" on debts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own rows only" on debt_payments;
+create policy "own rows only" on debt_payments for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
 -- ── table-level grants for the two new tables ──
 -- RLS policies above control *which rows* a role can touch, but Postgres
 -- separately requires baseline table privileges before RLS is even
@@ -203,3 +257,5 @@ create policy "own rows only" on savings_contributions for all using (auth.uid()
 -- clears the table-level gate.
 grant select, insert, update, delete on savings_goals to anon, authenticated;
 grant select, insert, update, delete on savings_contributions to anon, authenticated;
+grant select, insert, update, delete on debts to anon, authenticated;
+grant select, insert, update, delete on debt_payments to anon, authenticated;

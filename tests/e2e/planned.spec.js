@@ -43,7 +43,7 @@ test.describe("planned purchases", () => {
     await waitForSync(page);
   });
 
-  test("marking an item as bought converts it into a ledger transaction", async ({ page }) => {
+  test("marking an item as bought shows a tick and never touches the ledger", async ({ page }) => {
     await page.fill("#p-name", "E2E temp bought item");
     await page.fill("#p-amount", "17.50");
     await page.selectOption("#p-category", "other");
@@ -53,16 +53,21 @@ test.describe("planned purchases", () => {
     const row = page.locator(".planned-row", { hasText: "E2E temp bought item" });
     await row.locator(".btn-bought").click();
 
-    await expect(page.locator(".planned-row", { hasText: "E2E temp bought item" })).toHaveCount(0);
-
-    // Clean up the transaction markPlannedBought() created, so the ledger
-    // count in tests/e2e/home.spec.js stays exactly 9 for every run.
-    const ledgerRow = page.locator(".ledger-row", { hasText: "E2E temp bought item" });
-    await expect(ledgerRow).toContainText(gbp(17.5));
-    const del = ledgerRow.locator(".ledger-del");
-    await del.click();
-    await del.click();
+    // Row stays in the list, marked bought — no ledger transaction appears.
+    await expect(row).toHaveClass(/planned-row-bought/);
+    await expect(row.locator(".planned-bought-tick")).toContainText("Bought");
     await expect(page.locator(".ledger-row", { hasText: "E2E temp bought item" })).toHaveCount(0);
+
+    // Undo puts it back to the normal not-bought state.
+    await row.locator(".btn-undo-bought").click();
+    await expect(row).not.toHaveClass(/planned-row-bought/);
+    await expect(row.locator(".btn-bought")).toBeVisible();
+
+    // Clean up the throwaway item itself.
+    const removeBtn = row.locator(".ledger-del");
+    await removeBtn.click();
+    await removeBtn.click();
+    await expect(page.locator(".planned-row", { hasText: "E2E temp bought item" })).toHaveCount(0);
     await waitForSync(page);
   });
 });
