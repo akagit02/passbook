@@ -13,6 +13,7 @@ import * as recurringDomain from "./recurring/index.js";
 import * as patternsDomain from "./patterns/index.js";
 import * as insightsDomain from "./insights/index.js";
 import * as savingsDomain from "./savings/index.js";
+import * as debtsDomain from "./debts/index.js";
 
 export async function boot() {
   "use strict";
@@ -44,7 +45,9 @@ export async function boot() {
     cardBalances: [],
     recurringExpenses: [],
     savingsContributions: [],
-    savingsGoals: []
+    savingsGoals: [],
+    debts: [],
+    debtPayments: []
   };
   var viewMonth = null;
   var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
@@ -54,10 +57,11 @@ export async function boot() {
   var recurringListExpanded = false;
   var breakdownExpanded = false;
   var patternsExpanded = false;
-  var currentView = "home"; // "home" | "savings"
+  var currentView = "home"; // "home" | "savings" | "debt"
   var showingGoalForm = false;
   var goalSliderTouched = false; // true once the user has dragged the slider by hand this time round
   var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
+  var editingContributionId = null; // set while #savings-form is editing an existing contribution rather than logging a new one
 
   // ---------- pay-cycle periods (src/periods) ----------
 
@@ -112,6 +116,7 @@ export async function boot() {
   // ---------- recurring / direct debits (src/recurring) ----------
 
   function installmentRemaining(rule) { return recurringDomain.installmentRemaining(rule, state.transactions); }
+  function installmentPaidSoFar(rule) { return recurringDomain.installmentPaidSoFar(rule, state.transactions); }
 
   // Generates any due-but-not-yet-logged recurring transactions, adds them to
   // state.transactions, and returns them so the caller can batch-insert them
@@ -716,11 +721,22 @@ export async function boot() {
     if (editingCalendar) { renderCalendarEditForm(); } else { renderCalendar(); }
   }
 
+  // Only items assigned to the current pay period show here — an unbought
+  // item whose period has passed is bumped forward to the current one by
+  // rolloverPlannedItems() (called once on load), which is what keeps it
+  // "in the list" instead of aging out of view. A bought item keeps whatever
+  // period it was bought in and simply stops showing once that period ends.
+  function currentPeriodPlanned() {
+    var pk = currentPeriodKey();
+    return state.plannedExpenses.filter(function (p) { return (p.periodKey || pk) === pk; });
+  }
+
   function renderPlanned() {
     var listEl = document.getElementById("planned-list");
     var summaryEl = document.getElementById("planned-summary");
-    var items = state.plannedExpenses.slice().sort(function (a, b) { return b.amount - a.amount; });
-    var total = items.reduce(function (s, p) { return s + p.amount; }, 0);
+    var items = currentPeriodPlanned().slice().sort(function (a, b) { return b.amount - a.amount; });
+    // Bought items are done — they don't count towards "would this fit" any more.
+    var total = items.reduce(function (s, p) { return p.bought ? s : s + p.amount; }, 0);
 
     if (!items.length) {
       summaryEl.textContent = "";
@@ -744,12 +760,16 @@ export async function boot() {
     var rowsHtml = items.map(function (p) {
       var cat = CATEGORIES[CAT_INDEX[p.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var idx = CAT_INDEX[p.categoryId] + 1;
+      var boughtAction = p.bought
+        ? '<span class="planned-bought-tick" title="Bought' + (p.boughtDate ? " " + esc(p.boughtDate) : "") + '">✓ Bought</span>' +
+          '<button type="button" class="link-btn btn-undo-bought" data-id="' + esc(p.id) + '">Undo</button>'
+        : '<button type="button" class="btn-bought" data-id="' + esc(p.id) + '">Bought</button>';
       return (
-        '<div class="planned-row" data-id="' + esc(p.id) + '">' +
+        '<div class="planned-row' + (p.bought ? " planned-row-bought" : "") + '" data-id="' + esc(p.id) + '">' +
         '<div class="planned-main"><div class="planned-name">' + esc(p.name) + '</div>' +
         '<div class="planned-cat"><span class="cat-dot" style="background:var(--cat-' + idx + ')"></span>' + esc(cat.label) + "</div></div>" +
         '<div class="planned-amount">' + fmtMoney(p.amount) + "</div>" +
-        '<div class="planned-actions"><button type="button" class="btn-bought" data-id="' + esc(p.id) + '">Bought</button>' +
+        '<div class="planned-actions">' + boughtAction +
         '<button type="button" class="ledger-del" data-id="' + esc(p.id) + '">Remove</button></div>' +
         "</div>"
       );
@@ -767,7 +787,10 @@ export async function boot() {
     });
 
     listEl.querySelectorAll(".btn-bought").forEach(function (btn) {
-      btn.addEventListener("click", function () { markPlannedBought(btn.dataset.id); });
+      btn.addEventListener("click", function () { togglePlannedBought(btn.dataset.id, true); });
+    });
+    listEl.querySelectorAll(".btn-undo-bought").forEach(function (btn) {
+      btn.addEventListener("click", function () { togglePlannedBought(btn.dataset.id, false); });
     });
     listEl.querySelectorAll(".ledger-del").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -1020,11 +1043,17 @@ export async function boot() {
         (subParts.length ? '<div class="savings-sub">' + esc(subParts.join(" · ")) + "</div>" : "") +
         "</div>" +
         '<div class="ledger-amount">' + fmtMoney(c.amount) + "</div>" +
+        '<div class="savings-row-actions">' +
+        '<button type="button" class="link-btn savings-edit" data-id="' + esc(c.id) + '">Edit</button>' +
         '<button type="button" class="ledger-del savings-del" data-id="' + esc(c.id) + '">Delete</button>' +
+        "</div>" +
         "</div>";
     });
     el.innerHTML = html;
 
+    el.querySelectorAll(".savings-edit").forEach(function (btn) {
+      btn.addEventListener("click", function () { startEditingContribution(btn.dataset.id); });
+    });
     el.querySelectorAll(".savings-del").forEach(function (btn) {
       btn.addEventListener("click", function () {
         if (btn.dataset.confirming === "1") {
@@ -1379,6 +1408,111 @@ export async function boot() {
     renderAllocationAdvice();
   }
 
+  // Two independent lists: debts tracked here (never touch the ledger — see
+  // src/debts) and installment-based recurring rules (already fully wired
+  // into the ledger via src/recurring's installment fields), so a purchase
+  // financed on a store card that *does* generate ledger transactions isn't
+  // duplicated here — it's read straight off Recurring payments instead.
+  function renderDebtView() {
+    var el = document.getElementById("debt-list");
+    var summaryEl = document.getElementById("debt-summary");
+    var debts = state.debts.slice().sort(function (a, b) { return a.label.localeCompare(b.label); });
+
+    if (!debts.length) {
+      summaryEl.textContent = "";
+      el.innerHTML = '<p class="empty-state">Nothing tracked yet — add a debt above (an old loan or store card being paid off outside this app).</p>';
+    } else {
+      var totalRemaining = debts.reduce(function (s, d) { return s + debtsDomain.debtRemaining(d, state.debtPayments); }, 0);
+      summaryEl.textContent = fmtMoney(totalRemaining) + " left across " + debts.length + (debts.length === 1 ? " debt" : " debts");
+
+      el.innerHTML = debts.map(function (d) {
+        var remaining = debtsDomain.debtRemaining(d, state.debtPayments);
+        var pct = debtsDomain.debtProgressPct(d, state.debtPayments);
+        var payments = debtsDomain.paymentsForDebt(d.id, state.debtPayments).slice().sort(function (a, b) { return b.date < a.date ? -1 : 1; });
+        var paymentsHtml = payments.map(function (p) {
+          return '<div class="debt-payment-row"><span>' + esc(p.date) + '</span><span>' + fmtMoney(p.amount) + '</span>' +
+            '<button type="button" class="link-btn debt-payment-del" data-id="' + esc(p.id) + '">Delete</button></div>';
+        }).join("");
+        return (
+          '<div class="debt-card" data-id="' + esc(d.id) + '">' +
+          '<div class="debt-card-top"><span class="debt-label">' + esc(d.label) + '</span>' +
+          '<button type="button" class="link-btn debt-del" data-id="' + esc(d.id) + '">Remove</button></div>' +
+          '<div class="debt-figures"><span>' + fmtMoney(remaining) + ' left</span><span class="debt-of">of ' + fmtMoney(d.originalAmount) + '</span></div>' +
+          '<div class="bar-track"><div class="bar-fill tier-low" style="width:' + Math.max(2, pct) + '%"></div></div>' +
+          '<form class="debt-payment-form" data-debt-id="' + esc(d.id) + '">' +
+          '<input type="number" class="debt-payment-amount" inputmode="decimal" step="0.01" min="0.01" placeholder="Amount" required />' +
+          '<input type="date" class="debt-payment-date" value="' + esc(todayStr()) + '" required />' +
+          '<button type="submit" class="btn-secondary">Log payment</button>' +
+          "</form>" +
+          (paymentsHtml ? '<div class="debt-payments">' + paymentsHtml + "</div>" : "") +
+          "</div>"
+        );
+      }).join("");
+
+      el.querySelectorAll(".debt-del").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (btn.dataset.confirming === "1") {
+            deleteDebt(btn.dataset.id);
+          } else {
+            btn.dataset.confirming = "1";
+            btn.textContent = "Sure?";
+            setTimeout(function () { btn.dataset.confirming = "0"; btn.textContent = "Remove"; }, 2800);
+          }
+        });
+      });
+      el.querySelectorAll(".debt-payment-del").forEach(function (btn) {
+        btn.addEventListener("click", function () { deleteDebtPayment(btn.dataset.id); });
+      });
+      el.querySelectorAll(".debt-payment-form").forEach(function (form) {
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var amount = parseFloat(form.querySelector(".debt-payment-amount").value);
+          var date = form.querySelector(".debt-payment-date").value || todayStr();
+          if (!isFinite(amount) || amount <= 0) return;
+          addDebtPayment(form.dataset.debtId, Math.round(amount * 100) / 100, date);
+        });
+      });
+    }
+
+    var linkedEl = document.getElementById("debt-linked-list");
+    var linked = state.recurringExpenses.filter(function (r) { return r.installment; });
+    if (!linked.length) {
+      linkedEl.innerHTML = '<p class="empty-state">No finance agreements set up in Recurring payments yet.</p>';
+      return;
+    }
+    linkedEl.innerHTML = linked.map(function (r) {
+      var remaining = installmentRemaining(r);
+      var paid = installmentPaidSoFar(r);
+      var pct = r.installment.totalOwed > 0 ? Math.min(100, (paid / r.installment.totalOwed) * 100) : 0;
+      return (
+        '<div class="debt-card">' +
+        '<div class="debt-card-top"><span class="debt-label">' + esc(r.label) + (r.active ? "" : " (inactive)") + '</span></div>' +
+        '<div class="debt-figures"><span>' + fmtMoney(remaining) + ' left</span><span class="debt-of">of ' + fmtMoney(r.installment.totalOwed) + '</span></div>' +
+        '<div class="bar-track"><div class="bar-fill tier-growth" style="width:' + Math.max(2, pct) + '%"></div></div>' +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function wireDebtForms() {
+    document.getElementById("debt-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var label = document.getElementById("d-label").value.trim().slice(0, 60);
+      var original = parseFloat(document.getElementById("d-original").value);
+      var startingRaw = document.getElementById("d-starting").value;
+      var starting = startingRaw ? parseFloat(startingRaw) : 0;
+      var dayRaw = document.getElementById("d-day").value;
+      if (!label || !isFinite(original) || original <= 0) return;
+      var d = {
+        id: genId(), label: label, originalAmount: Math.round(original * 100) / 100,
+        startingBalance: isFinite(starting) ? Math.round(starting * 100) / 100 : 0,
+        paymentDay: dayRaw ? parseInt(dayRaw, 10) : null, active: true, createdAt: todayStr()
+      };
+      addDebt(d);
+      document.getElementById("debt-form").reset();
+    });
+  }
+
   function renderAll() {
     renderMonthLabel();
     renderCardReminders();
@@ -1391,6 +1525,7 @@ export async function boot() {
     renderPlanned();
     renderRecurringPanel();
     if (currentView === "savings") renderSavingsView();
+    if (currentView === "debt") renderDebtView();
   }
 
   // The app is a single page with one section visible at a time rather than a
@@ -1401,10 +1536,12 @@ export async function boot() {
     currentView = name;
     document.getElementById("view-home").hidden = name !== "home";
     document.getElementById("view-savings").hidden = name !== "savings";
+    document.getElementById("view-debt").hidden = name !== "debt";
     document.querySelector(".month-nav").hidden = name !== "home";
     document.getElementById("range-form").hidden = true;
     document.getElementById("nav-home").classList.toggle("active", name === "home");
     document.getElementById("nav-savings").classList.toggle("active", name === "savings");
+    document.getElementById("nav-debt").classList.toggle("active", name === "debt");
     closeSideNav();
     renderAll();
   }
@@ -1467,8 +1604,18 @@ export async function boot() {
     };
   }
 
-  function rowToPlanned(r) { return { id: r.id, name: r.name, amount: Number(r.amount), categoryId: r.category_id, note: r.note || "", createdAt: r.created_at }; }
-  function plannedToRow(p) { return { id: p.id, user_id: currentUserId, name: p.name, amount: p.amount, category_id: p.categoryId, note: p.note || "", created_at: p.createdAt }; }
+  function rowToPlanned(r) {
+    return {
+      id: r.id, name: r.name, amount: Number(r.amount), categoryId: r.category_id, note: r.note || "",
+      createdAt: r.created_at, periodKey: r.period_key || null, bought: !!r.bought, boughtDate: r.bought_date || null
+    };
+  }
+  function plannedToRow(p) {
+    return {
+      id: p.id, user_id: currentUserId, name: p.name, amount: p.amount, category_id: p.categoryId, note: p.note || "",
+      created_at: p.createdAt, period_key: p.periodKey || null, bought: !!p.bought, bought_date: p.boughtDate || null
+    };
+  }
 
   function rowToBalance(r) {
     return {
@@ -1524,6 +1671,26 @@ export async function boot() {
     };
   }
 
+  function rowToDebt(r) {
+    return {
+      id: r.id, label: r.label, originalAmount: Number(r.original_amount), startingBalance: Number(r.starting_balance || 0),
+      paymentDay: r.payment_day || null, active: !!r.active, createdAt: r.created_at
+    };
+  }
+  function debtToRow(d) {
+    return {
+      id: d.id, user_id: currentUserId, label: d.label, original_amount: d.originalAmount, starting_balance: d.startingBalance || 0,
+      payment_day: d.paymentDay || null, active: d.active !== false, created_at: d.createdAt
+    };
+  }
+
+  function rowToDebtPayment(r) {
+    return { id: r.id, debtId: r.debt_id, amount: Number(r.amount), date: r.date };
+  }
+  function debtPaymentToRow(p) {
+    return { id: p.id, user_id: currentUserId, debt_id: p.debtId, amount: p.amount, date: p.date };
+  }
+
   async function loadAll() {
     var results = await Promise.all([
       sb.from("settings").select("*").maybeSingle(),
@@ -1534,7 +1701,9 @@ export async function boot() {
       sb.from("card_balances").select("*"),
       sb.from("recurring_expenses").select("*"),
       sb.from("savings_contributions").select("*"),
-      sb.from("savings_goals").select("*")
+      sb.from("savings_goals").select("*"),
+      sb.from("debts").select("*"),
+      sb.from("debt_payments").select("*")
     ]);
 
     var firstError = results.map(function (r) { return r.error; }).filter(Boolean)[0];
@@ -1551,8 +1720,23 @@ export async function boot() {
       cardBalances: (results[5].data || []).map(rowToBalance),
       recurringExpenses: (results[6].data || []).map(rowToRecurring),
       savingsContributions: (results[7].data || []).map(rowToContribution),
-      savingsGoals: (results[8].data || []).map(rowToGoal)
+      savingsGoals: (results[8].data || []).map(rowToGoal),
+      debts: (results[9].data || []).map(rowToDebt),
+      debtPayments: (results[10].data || []).map(rowToDebtPayment)
     };
+  }
+
+  // Bumps every unbought planned item whose period has already passed
+  // forward to the current period, in one batched update, so it stays
+  // visible in "this month" instead of aging out when its original period
+  // ends. A missing period_key (pre-migration rows, or the seeded test data)
+  // counts as needing the bump too.
+  function rolloverPlannedItems() {
+    var pk = currentPeriodKey();
+    var stale = state.plannedExpenses.filter(function (p) { return !p.bought && (!p.periodKey || p.periodKey < pk); });
+    if (!stale.length) return;
+    stale.forEach(function (p) { p.periodKey = pk; });
+    dbCall(sb.from("planned_expenses").update({ period_key: pk }).in("id", stale.map(function (p) { return p.id; })));
   }
 
   function addTransaction(data) {
@@ -1600,9 +1784,37 @@ export async function boot() {
     }));
   }
 
+  // Edits both halves of a contribution in place — the savings_contributions
+  // row and its paired ledger transaction — so the two never drift apart the
+  // way they would if only one side got updated.
+  function updateSavingsContribution(id, data) {
+    var c = state.savingsContributions.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    c.amount = data.amount;
+    c.date = data.date;
+    c.vehicle = data.vehicle;
+    c.accountLabel = data.accountLabel || "";
+    c.goalId = data.goalId || null;
+    c.note = data.note || "";
+    var ops = [sb.from("savings_contributions").update(contributionToRow(c)).eq("id", id)];
+    if (c.transactionId) {
+      var t = state.transactions.filter(function (x) { return x.id === c.transactionId; })[0];
+      if (t) {
+        t.amount = data.amount;
+        t.date = data.date;
+        t.note = data.note || vehicleFor(data.vehicle).label;
+        t.paymentMethod = data.source || "";
+        ops.push(sb.from("transactions").update(txToRow(t)).eq("id", t.id));
+      }
+    }
+    renderAll();
+    dbCall(Promise.all(ops));
+  }
+
   function deleteSavingsContribution(id) {
     var c = state.savingsContributions.filter(function (x) { return x.id === id; })[0];
     if (!c) return;
+    if (editingContributionId === id) cancelEditingContribution();
     state.savingsContributions = state.savingsContributions.filter(function (x) { return x.id !== id; });
     var ops = [sb.from("savings_contributions").delete().eq("id", id)];
     if (c.transactionId) {
@@ -1629,20 +1841,52 @@ export async function boot() {
     dbCall(sb.from("savings_goals").delete().eq("id", id));
   }
 
-  function markPlannedBought(id) {
+  // ---------- debts tracked outside the ledger (src/debts) ----------
+  // These are debts an employer or similar deducts before you ever see the
+  // money — logging a payment here must never touch `transactions` or the
+  // leftover figure, since that money was never "yours" to spend in the
+  // first place. Contrast with a recurring_expenses installment (e.g. a
+  // dining table on finance), which *is* already in the ledger and needs no
+  // entry here — see the "linked to your ledger" section of renderDebtView.
+
+  function addDebt(d) {
+    state.debts.push(d);
+    renderAll();
+    dbCall(sb.from("debts").insert(debtToRow(d)));
+  }
+
+  function deleteDebt(id) {
+    state.debts = state.debts.filter(function (d) { return d.id !== id; });
+    state.debtPayments = state.debtPayments.filter(function (p) { return p.debtId !== id; });
+    renderAll();
+    dbCall(sb.from("debts").delete().eq("id", id));
+  }
+
+  function addDebtPayment(debtId, amount, date) {
+    var p = { id: genId(), debtId: debtId, amount: amount, date: date };
+    state.debtPayments.push(p);
+    renderAll();
+    dbCall(sb.from("debt_payments").insert(debtPaymentToRow(p)));
+  }
+
+  function deleteDebtPayment(id) {
+    state.debtPayments = state.debtPayments.filter(function (p) { return p.id !== id; });
+    renderAll();
+    dbCall(sb.from("debt_payments").delete().eq("id", id));
+  }
+
+  // Marking an item bought never touches the ledger — the user adds that
+  // transaction themselves — it only flips a flag so the row shows a green
+  // tick instead of the "Bought" button. `bought` also takes the item out of
+  // rolloverPlannedItems()'s reach, so it stops following the current period
+  // once it's done.
+  function togglePlannedBought(id, bought) {
     var item = state.plannedExpenses.filter(function (p) { return p.id === id; })[0];
     if (!item) return;
-    state.plannedExpenses = state.plannedExpenses.filter(function (p) { return p.id !== id; });
-    var t = {
-      id: genId(), amount: item.amount, date: todayStr(), categoryId: item.categoryId,
-      note: item.note ? (item.name + " — " + item.note) : item.name, recurringId: null, recurringOccurrence: null
-    };
-    state.transactions.push(t);
+    item.bought = bought;
+    item.boughtDate = bought ? todayStr() : null;
     renderAll();
-    dbCall(Promise.all([
-      sb.from("planned_expenses").delete().eq("id", id),
-      sb.from("transactions").insert(txToRow(t))
-    ]));
+    dbCall(sb.from("planned_expenses").update({ bought: bought, bought_date: item.boughtDate }).eq("id", id));
   }
 
   function removePlanned(id) {
@@ -1670,29 +1914,79 @@ export async function boot() {
     });
   }
 
+  // Current period plus the next 5, so a planned item can optionally be
+  // set aside for a future pay period rather than only "right now". Must run
+  // after loadAll() has populated state.incomeSources — cycleStartDay()
+  // defaults to day 1 on an empty list, so calling this before sign-in would
+  // compute the wrong "current period" for anyone whose actual payday isn't
+  // the 1st. Rebuilds from scratch each call since showApp() (and so this)
+  // can run more than once per page load (sign out, then sign in again).
+  function populatePlannedPeriodSelect() {
+    var sel = document.getElementById("p-period");
+    sel.innerHTML = "";
+    var pk = currentPeriodKey();
+    for (var i = 0; i <= 5; i++) {
+      var mk = shiftMonth(pk, i);
+      var opt = document.createElement("option");
+      opt.value = mk;
+      opt.textContent = periodLabel(mk) + (i === 0 ? " (this period)" : "");
+      sel.appendChild(opt);
+    }
+  }
+
   function wirePlannedForm() {
     document.getElementById("planned-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var name = document.getElementById("p-name").value.trim().slice(0, 60);
       var amount = parseFloat(document.getElementById("p-amount").value);
       var categoryId = document.getElementById("p-category").value;
+      var periodKey = document.getElementById("p-period").value || currentPeriodKey();
       if (!name || !isFinite(amount) || amount <= 0 || !categoryId) return;
-      var p = { id: genId(), name: name, amount: Math.round(amount * 100) / 100, categoryId: categoryId, note: "", createdAt: todayStr() };
+      var p = {
+        id: genId(), name: name, amount: Math.round(amount * 100) / 100, categoryId: categoryId, note: "",
+        createdAt: todayStr(), periodKey: periodKey, bought: false, boughtDate: null
+      };
       state.plannedExpenses.push(p);
       renderAll();
       dbCall(sb.from("planned_expenses").insert(plannedToRow(p)));
       document.getElementById("planned-form").reset();
+      document.getElementById("p-period").value = currentPeriodKey();
     });
+  }
+
+  function startEditingContribution(id) {
+    var c = state.savingsContributions.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    editingContributionId = id;
+    document.getElementById("s-amount").value = c.amount;
+    document.getElementById("s-date").value = c.date;
+    document.getElementById("s-vehicle").value = c.vehicle;
+    document.getElementById("s-account").value = c.accountLabel || "";
+    document.getElementById("s-goal").value = c.goalId || "";
+    document.getElementById("s-source").value = (state.transactions.filter(function (t) { return t.id === c.transactionId; })[0] || {}).paymentMethod || "";
+    document.getElementById("s-note").value = c.note || "";
+    document.getElementById("savings-submit").textContent = "Save changes";
+    document.getElementById("savings-cancel-edit").hidden = false;
+    document.getElementById("savings-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function cancelEditingContribution() {
+    editingContributionId = null;
+    document.getElementById("savings-form").reset();
+    document.getElementById("s-date").value = todayStr();
+    document.getElementById("savings-submit").textContent = "Log savings";
+    document.getElementById("savings-cancel-edit").hidden = true;
   }
 
   function wireSavingsForm() {
     document.getElementById("s-date").value = todayStr();
+    document.getElementById("savings-cancel-edit").addEventListener("click", cancelEditingContribution);
     document.getElementById("savings-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var amount = parseFloat(document.getElementById("s-amount").value);
       var vehicle = document.getElementById("s-vehicle").value;
       if (!isFinite(amount) || amount <= 0 || !vehicle) return;
-      addSavingsContribution({
+      var data = {
         amount: Math.round(amount * 100) / 100,
         date: document.getElementById("s-date").value || todayStr(),
         vehicle: vehicle,
@@ -1700,7 +1994,13 @@ export async function boot() {
         goalId: document.getElementById("s-goal").value || null,
         source: document.getElementById("s-source").value.trim().slice(0, 40),
         note: document.getElementById("s-note").value.trim().slice(0, 80)
-      });
+      };
+      if (editingContributionId) {
+        updateSavingsContribution(editingContributionId, data);
+        cancelEditingContribution();
+        return;
+      }
+      addSavingsContribution(data);
       document.getElementById("s-amount").value = "";
       document.getElementById("s-note").value = "";
       document.getElementById("s-date").value = todayStr();
@@ -2073,6 +2373,8 @@ export async function boot() {
       showBanner();
     }
     viewMonth = currentPeriodKey();
+    populatePlannedPeriodSelect();
+    rolloverPlannedItems();
     var generated = generateRecurringTransactions();
     if (generated.length) dbCall(sb.from("transactions").insert(generated.map(txToRow)));
     showView("home");
@@ -2210,6 +2512,7 @@ export async function boot() {
     document.getElementById("nav-overlay").addEventListener("click", closeSideNav);
     document.getElementById("nav-home").addEventListener("click", function () { showView("home"); });
     document.getElementById("nav-savings").addEventListener("click", function () { showView("savings"); });
+    document.getElementById("nav-debt").addEventListener("click", function () { showView("debt"); });
     document.getElementById("nav-profile").addEventListener("click", openProfileModal);
     document.getElementById("profile-close").addEventListener("click", closeProfileModal);
     document.getElementById("profile-overlay").addEventListener("click", closeProfileModal);
@@ -2228,6 +2531,7 @@ export async function boot() {
     wireForm();
     wirePlannedForm();
     wireSavingsForm();
+    wireDebtForms();
     wireGoalForm();
     wireSavingsFilters();
     wireCalendarEdit();

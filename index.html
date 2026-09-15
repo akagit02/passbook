@@ -568,6 +568,14 @@
     cursor: pointer;
   }
   .btn-bought:hover { background: var(--positive); color: #fff; }
+  .planned-row-bought { opacity: 0.7; }
+  .planned-row-bought .planned-name { text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+  .planned-bought-tick {
+    color: var(--positive);
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
 
   /* recurring payments */
   .recurring-list { display: flex; flex-direction: column; }
@@ -658,6 +666,46 @@
     padding: 1px 6px;
     flex: none;
   }
+  .savings-row-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* debt tab */
+  .debt-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .debt-card-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .debt-label { font-weight: 500; }
+  .debt-figures { display: flex; align-items: baseline; gap: 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .debt-of { font-size: 0.78rem; color: var(--ink-faint); font-family: var(--font-body); }
+  .debt-payment-form { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  .debt-payment-form input[type="number"] { width: 8em; }
+  .debt-payment-form input,
+  .debt-payment-form button {
+    padding: 7px 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 0.85rem;
+  }
+  .debt-payments { display: flex; flex-direction: column; margin-top: 4px; border-top: 1px solid var(--line); }
+  .debt-payment-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .debt-payment-row span:first-child { flex: 1; }
+  .debt-payment-row .link-btn { font-family: var(--font-body); }
 
   /* holdings + ISA meter */
   .holding-row { padding: 8px 0; }
@@ -925,6 +973,7 @@
   </div>
   <button type="button" class="side-nav-item" id="nav-home">🏠 Home</button>
   <button type="button" class="side-nav-item" id="nav-savings">🏦 Savings</button>
+  <button type="button" class="side-nav-item" id="nav-debt">💳 Debt</button>
   <button type="button" class="side-nav-item" id="nav-profile">👤 Profile</button>
 </nav>
 
@@ -1034,7 +1083,7 @@
 
       <div class="panel">
         <div class="panel-header">
-          <h2>Planned purchases</h2>
+          <h2>Planned item for this month</h2>
           <span class="panel-sub" id="planned-summary"></span>
         </div>
         <form id="planned-form" class="quick-add" autocomplete="off" style="box-shadow:none;border:1px solid var(--line);padding:14px;">
@@ -1054,6 +1103,10 @@
             <select id="p-category" required>
               <option value="" disabled selected>Choose…</option>
             </select>
+          </div>
+          <div class="field">
+            <label for="p-period">Pay period</label>
+            <select id="p-period"></select>
           </div>
           <button type="submit" class="btn-secondary">Add to plan</button>
         </form>
@@ -1209,7 +1262,8 @@
           <label for="s-note">Note <span class="opt">(optional)</span></label>
           <input id="s-note" type="text" maxlength="80" placeholder="e.g. monthly transfer" />
         </div>
-        <button type="submit" class="btn-primary">Log savings</button>
+        <button type="submit" class="btn-primary" id="savings-submit">Log savings</button>
+        <button type="button" class="link-btn" id="savings-cancel-edit" hidden>Cancel edit</button>
       </form>
     </section>
 
@@ -1304,6 +1358,54 @@
     </section>
 
   </div><!-- /view-savings -->
+
+  <div id="view-debt" class="view" hidden>
+
+    <section class="quick-add-wrap">
+      <form id="debt-form" class="quick-add" autocomplete="off">
+        <h2>Add a debt</h2>
+        <div class="field field-wide">
+          <label for="d-label">What is it</label>
+          <input id="d-label" type="text" maxlength="60" placeholder="e.g. Visa loan" required />
+        </div>
+        <div class="field">
+          <label for="d-original">Full amount</label>
+          <div class="amount-input">
+            <span class="currency-prefix">£</span>
+            <input id="d-original" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="d-starting">Already paid off <span class="opt">(optional)</span></label>
+          <div class="amount-input">
+            <span class="currency-prefix">£</span>
+            <input id="d-starting" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="d-day">Auto-debit day <span class="opt">(optional)</span></label>
+          <input id="d-day" type="number" inputmode="numeric" min="1" max="31" placeholder="e.g. 28" />
+        </div>
+        <button type="submit" class="btn-primary">Add debt</button>
+      </form>
+    </section>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Tracked here</h2>
+        <span class="panel-sub" id="debt-summary"></span>
+      </div>
+      <p class="panel-sub" style="margin:-6px 0 10px;">Debts deducted outside this app (e.g. by an employer) — logging a payment here never touches your ledger or leftover.</p>
+      <div id="debt-list"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Linked to your ledger</h2></div>
+      <p class="panel-sub" style="margin:-6px 0 10px;">Finance agreements already set up as a direct debit in Recurring payments — paid down automatically as those transactions post. Edit the amount or day there.</p>
+      <div id="debt-linked-list"></div>
+    </div>
+
+  </div><!-- /view-debt -->
 
   <footer class="app-footer">
     <p>Private to your household</p>

@@ -42,9 +42,11 @@ begin
     raise exception 'reset_test_data: only the E2E test account may reset its data';
   end if;
 
-  -- Children before parents (contributions -> transactions/goals, balances -> cards).
+  -- Children before parents (contributions -> transactions/goals, balances -> cards, debt_payments -> debts).
   delete from savings_contributions where user_id = uid;
   delete from card_balances         where user_id = uid;
+  delete from debt_payments         where user_id = uid;
+  delete from debts                 where user_id = uid;
   delete from transactions          where user_id = uid;
   delete from recurring_expenses    where user_id = uid;
   delete from planned_expenses      where user_id = uid;
