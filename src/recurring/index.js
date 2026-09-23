@@ -68,6 +68,7 @@ export function generateRecurringTransactions(rules, transactions, now) {
         date: todayStr(occDate),
         categoryId: rule.categoryId,
         note: rule.label,
+        paymentMethod: rule.paymentMethod || "",
         recurringId: rule.id,
         recurringOccurrence: mk
       };

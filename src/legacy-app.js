@@ -833,6 +833,7 @@ export async function boot() {
       var cat = CATEGORIES[CAT_INDEX[r.categoryId]] || CATEGORIES[CATEGORIES.length - 1];
       var idx = CAT_INDEX[r.categoryId] + 1;
       var subParts = [cat.label];
+      if (r.paymentMethod) subParts.push(r.paymentMethod);
       if (r.installment) {
         var remaining = installmentRemaining(r);
         var paid = Math.round((r.installment.totalOwed - remaining) * 100) / 100;
@@ -874,6 +875,7 @@ export async function boot() {
         '<span class="edit-suffix">£</span><input type="number" step="0.01" min="0" class="edit-amount" value="' + r.amount + '" />' +
         '<span class="edit-suffix">day</span><input type="number" class="edit-day" min="1" max="31" value="' + r.dayOfMonth + '" />' +
         '<select class="edit-category">' + categoryOptionsHtml(r.categoryId) + "</select>" +
+        '<input type="text" class="edit-payment-method" list="payment-method-options" value="' + esc(r.paymentMethod || "") + '" placeholder="Debited from" maxlength="40" autocomplete="off" />' +
         '<span class="edit-suffix">from</span><input type="month" class="edit-start" value="' + esc(r.startMonth || "") + '" title="Starts (blank = always)" />' +
         '<label class="edit-active-toggle"><input type="checkbox" class="edit-active" ' + (r.active ? "checked" : "") + ' /> active</label>' +
         '<button type="button" class="link-btn edit-remove">Remove</button>' +
@@ -1935,14 +1937,14 @@ export async function boot() {
     return {
       id: r.id, label: r.label, amount: Number(r.amount), dayOfMonth: r.day_of_month, categoryId: r.category_id,
       active: !!r.active, installment: r.installment_total != null ? { totalOwed: Number(r.installment_total) } : null,
-      startMonth: r.start_month || null, createdAt: r.created_at
+      startMonth: r.start_month || null, paymentMethod: r.payment_method || "", createdAt: r.created_at
     };
   }
   function recurringToRow(rec) {
     return {
       id: rec.id, user_id: currentUserId, label: rec.label, amount: rec.amount, day_of_month: rec.dayOfMonth, category_id: rec.categoryId,
       active: rec.active, installment_total: rec.installment ? rec.installment.totalOwed : null,
-      start_month: rec.startMonth || null, created_at: rec.createdAt
+      start_month: rec.startMonth || null, payment_method: rec.paymentMethod || null, created_at: rec.createdAt
     };
   }
 
@@ -2498,6 +2500,7 @@ export async function boot() {
       var amount = parseFloat(document.getElementById("rec-amount").value);
       var day = clampDayInput(document.getElementById("rec-day").value, 1);
       var categoryId = document.getElementById("rec-category").value;
+      var paymentMethod = document.getElementById("rec-payment-method").value.trim().slice(0, 40);
       var startsRaw = document.getElementById("rec-starts").value; // "" or "YYYY-MM"
       var totalRaw = document.getElementById("rec-total").value;
       var total = parseFloat(totalRaw);
@@ -2510,6 +2513,7 @@ export async function boot() {
         amount: Math.round(amount * 100) / 100,
         dayOfMonth: day,
         categoryId: categoryId,
+        paymentMethod: paymentMethod,
         active: true,
         installment: (totalRaw && isFinite(total) && total > 0) ? { totalOwed: Math.round(total * 100) / 100 } : null,
         startMonth: /^\d{4}-\d{2}$/.test(startsRaw) ? startsRaw : null,
@@ -2544,6 +2548,7 @@ export async function boot() {
         var amount = parseFloat(row.querySelector(".edit-amount").value);
         var day = clampDayInput(row.querySelector(".edit-day").value, existing ? existing.dayOfMonth : 1);
         var categoryId = row.querySelector(".edit-category").value;
+        var paymentMethod = row.querySelector(".edit-payment-method").value.trim().slice(0, 40);
         var active = row.querySelector(".edit-active").checked;
         var startMonth = row.querySelector(".edit-start").value;
         updated.push({
@@ -2552,6 +2557,7 @@ export async function boot() {
           amount: isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : (existing ? existing.amount : 0),
           dayOfMonth: day,
           categoryId: CAT_INDEX.hasOwnProperty(categoryId) ? categoryId : "other",
+          paymentMethod: paymentMethod,
           active: active,
           installment: existing ? existing.installment : null,
           startMonth: /^\d{4}-\d{2}$/.test(startMonth) ? startMonth : null,

@@ -121,6 +121,7 @@ create table if not exists recurring_expenses (
   created_at date not null default current_date
 );
 create index if not exists recurring_expenses_user_idx on recurring_expenses (user_id);
+alter table recurring_expenses add column if not exists payment_method text;
 
 -- ── savings goals (a target amount and a deadline to hit it by) ──
 -- "How long should it take me" is entered in the app as a number of months and
