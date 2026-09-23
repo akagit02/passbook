@@ -1,4 +1,7 @@
 // Recurring payments / direct debits domain.
+// Rules generate transactions that carry the rule's paymentMethod, so a
+// card-funded direct debit defers to its statement due date like any other
+// card spend (see src/cashflow).
 
 import { todayStr, shiftMonth, genId } from "../lib/index.js";
 
