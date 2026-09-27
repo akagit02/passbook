@@ -1,6 +1,7 @@
 // Credit cards domain.
 // Which transactions went on a card, when card statements close and fall
-// due, and which statements still need a balance recorded.
+// due, which statements still need a balance recorded, and how much has been
+// paid towards each (partly, in full, or more than the statement).
 
 import { todayStr, nextOccurrence, lastOccurrence } from "../lib/index.js";
 import { CARD_ALIASES } from "../categories/index.js";
@@ -18,13 +19,73 @@ export function cardForPaymentMethod(pm, creditCards) {
 
 export function isCardTransaction(t, creditCards) { return !!cardForPaymentMethod(t.paymentMethod, creditCards); }
 
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// How much has gone towards a statement so far. Rows saved before
+// paidAmount existed have it null — for those, "paid" meant paid in full.
+export function paidSoFar(b) {
+  if (b.paidAmount != null) return b.paidAmount;
+  return b.paid ? b.amount : 0;
+}
+
+export function remainingDue(b) { return Math.max(0, round2(b.amount - paidSoFar(b))); }
+
+// Paid on top of the statement — typically to cover purchases made after it
+// closed. The bank takes it off the next statement.
+export function extraPaid(b) { return Math.max(0, round2(paidSoFar(b) - b.amount)); }
+
+// Cash that leaves the bank for this statement: the statement amount, or
+// more if it was overpaid. Counting the extra here (and letting the next,
+// smaller statement count only itself) means every pound is counted once.
+export function statementCashOut(b) { return Math.max(b.amount, paidSoFar(b)); }
+
+// New paid fields for a statement once `totalPaid` in all has gone towards
+// it, the latest payment on `dateStr`. A total of 0 marks it unpaid again.
+export function cardPaymentFields(b, totalPaid, dateStr) {
+  var total = round2(Math.max(0, totalPaid));
+  return {
+    paidAmount: total,
+    paid: total >= b.amount,
+    paidDate: total > 0 ? dateStr : null
+  };
+}
+
+// Adds one payment of `amount` on `dateStr` to whatever was already paid.
+export function applyCardPayment(b, amount, dateStr) {
+  return cardPaymentFields(b, paidSoFar(b) + amount, dateStr);
+}
+
 // Card statements whose *due date* falls inside [startStr, endExclusiveStr).
 // Every card pound is counted in exactly one due-date period — see
 // cycleFinancials in src/cashflow.
 export function cardDuesInRange(cardBalances, startStr, endExclusiveStr) {
   return cardBalances
     .filter(function (b) { return b.dueDate >= startStr && b.dueDate < endExclusiveStr; })
-    .reduce(function (s, b) { return s + b.amount; }, 0);
+    .reduce(function (s, b) { return s + statementCashOut(b); }, 0);
+}
+
+// Extra paid on this card's statement before `closeDateStr` — already taken
+// off the statement closing on `closeDateStr` by the bank.
+export function creditFromPreviousStatement(card, closeDateStr, cardBalances) {
+  var prev = cardBalances
+    .filter(function (b) { return b.cardId === card.id && b.statementDate < closeDateStr; })
+    .sort(function (a, b) { return a.statementDate < b.statementDate ? -1 : 1; })
+    .slice(-1)[0];
+  return prev ? extraPaid(prev) : 0;
+}
+
+// The most recent statement per card that has had any payment made towards
+// it — what "edit a payment" works on.
+export function latestPaymentPerCard(creditCards, cardBalances) {
+  var out = [];
+  creditCards.forEach(function (c) {
+    var latest = cardBalances
+      .filter(function (b) { return b.cardId === c.id && paidSoFar(b) > 0; })
+      .sort(function (a, b) { return a.statementDate < b.statementDate ? -1 : 1; })
+      .slice(-1)[0];
+    if (latest) out.push({ card: c, balance: latest });
+  });
+  return out;
 }
 
 // Which statement a card purchase made on `dateStr` will be billed on, and
@@ -83,4 +144,11 @@ export function derivedStatementAmount(card, closeDateStr, transactions, creditC
       return !!tc && tc.id === card.id;
     })
     .reduce(function (s, t) { return s + t.amount; }, 0);
+}
+
+// What the statement closing on `closeDateStr` should be: purchases logged in
+// the cycle, less anything overpaid on the previous statement.
+export function suggestedStatementAmount(card, closeDateStr, transactions, creditCards, cardBalances) {
+  var derived = derivedStatementAmount(card, closeDateStr, transactions, creditCards);
+  return Math.max(0, round2(derived - creditFromPreviousStatement(card, closeDateStr, cardBalances)));
 }

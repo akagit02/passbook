@@ -10,6 +10,7 @@ import { cycleFinancials } from "../cashflow/index.js";
 import { reachableBuffer, medianEssentialMonthly } from "../savings/index.js";
 import { installmentRemaining } from "../recurring/index.js";
 import { debtRemaining, paymentsForDebt } from "../debts/index.js";
+import { remainingDue } from "../cards/index.js";
 
 // Card discipline isn't here: it's binary (anything overdue is red), so there
 // is no boundary for the user to move.
@@ -245,7 +246,7 @@ function cardDisciplineRow(st, range, now) {
   // Anything overdue right now counts whatever window is picked — it's the
   // one thing on this page that's costing money today.
   var overdue = balances.filter(function (b) { return !b.paid && b.dueDate < today; }).map(function (b) {
-    return { cardLabel: cardLabel(b.cardId), amount: b.amount, dueDate: b.dueDate };
+    return { cardLabel: cardLabel(b.cardId), amount: remainingDue(b), dueDate: b.dueDate };
   });
   var due = balances.filter(function (b) { return b.dueDate >= range.start && b.dueDate < range.end && b.dueDate < today; });
   var late = due.filter(function (b) { return b.paid && b.paidDate && b.paidDate > b.dueDate; });

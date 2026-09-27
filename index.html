@@ -527,6 +527,27 @@
   .cal-dot { width: 8px; height: 8px; border-radius: 50%; }
   .cal-amount-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .cal-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 0.85rem; }
+  .cal-paid-note { font-size: 0.74rem; color: var(--ink-soft); }
+
+  /* card payments: pay / edit forms */
+  .card-pay-form { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .card-pay-form input[type="number"] { width: 7em; }
+  .card-pay-form input,
+  .card-pay-form button {
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 0.8rem;
+  }
+  .card-pay-form button { cursor: pointer; }
+  .card-pay-form button[type="submit"] { background: var(--brass); border-color: var(--brass); color: #fff; font-weight: 600; }
+  .card-payments { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .card-payments[hidden] { display: none; }
+  .card-payment-main { display: flex; align-items: baseline; gap: 8px; }
+  .card-payment-text { flex: 1; font-size: 0.8rem; color: var(--ink-soft); line-height: 1.4; }
+  .card-payment-text strong { color: var(--ink); font-weight: 600; }
 
   .calendar-edit { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
   .edit-group-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-top: 4px; }
@@ -1268,6 +1289,7 @@
           <button type="button" class="link-btn" id="cal-edit-toggle">Edit</button>
         </div>
         <div id="calendar-list" class="calendar-list"></div>
+        <div id="card-payments-list" class="card-payments" hidden></div>
         <form id="calendar-edit-form" class="calendar-edit" hidden></form>
       </div>
       <div class="panel">

@@ -107,6 +107,11 @@ create table if not exists card_balances (
 );
 create index if not exists card_balances_user_idx on card_balances (user_id);
 
+-- Total paid towards a statement — can be part of it, or more than it (extra
+-- to cover purchases made after it closed; the bank takes that off the next
+-- statement). Null on rows from before this column: "paid" = paid in full.
+alter table card_balances add column if not exists paid_amount numeric;
+
 -- ── recurring payments / direct debits (rules that generate transactions) ──
 create table if not exists recurring_expenses (
   id text primary key,

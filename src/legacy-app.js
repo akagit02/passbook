@@ -531,6 +531,8 @@ export async function boot() {
     return cardsDomain.derivedStatementAmount(card, closeDateStr, state.transactions, state.creditCards);
   }
 
+  // A £0 statement (an earlier overpayment covered everything) has nothing
+  // to pay, so it's saved as already paid.
   function recordCardBalance(cardId, statementDate, amount) {
     var card = state.creditCards.filter(function (c) { return c.id === cardId; })[0];
     if (!card) return;
@@ -540,8 +542,9 @@ export async function boot() {
       statementDate: statementDate,
       dueDate: cardsDomain.statementDueDate(card, statementDate),
       amount: amount,
-      paid: false,
-      paidDate: null,
+      paid: amount === 0,
+      paidDate: amount === 0 ? statementDate : null,
+      paidAmount: amount === 0 ? 0 : null,
       createdAt: todayStr()
     };
     state.cardBalances.push(entry);
@@ -549,13 +552,60 @@ export async function boot() {
     dbCall(sb.from("card_balances").insert(balanceToRow(entry)));
   }
 
-  function markCardBalancePaid(id) {
+  function saveCardPaymentFields(entry, fields) {
+    entry.paidAmount = fields.paidAmount;
+    entry.paid = fields.paid;
+    entry.paidDate = fields.paidDate;
+    renderAll();
+    dbCall(sb.from("card_balances")
+      .update({ paid: fields.paid, paid_date: fields.paidDate, paid_amount: fields.paidAmount })
+      .eq("id", entry.id));
+  }
+
+  // One more payment towards a statement — may be part of it, all of it, or
+  // more than it.
+  function payCardBalance(id, amount, dateStr) {
     var entry = state.cardBalances.filter(function (b) { return b.id === id; })[0];
     if (!entry) return;
-    entry.paid = true;
-    entry.paidDate = todayStr();
-    renderAll();
-    dbCall(sb.from("card_balances").update({ paid: true, paid_date: entry.paidDate }).eq("id", id));
+    saveCardPaymentFields(entry, cardsDomain.applyCardPayment(entry, amount, dateStr));
+  }
+
+  // Corrects the total paid towards a statement (0 = not paid after all).
+  function setCardBalancePaidTotal(id, total, dateStr) {
+    var entry = state.cardBalances.filter(function (b) { return b.id === id; })[0];
+    if (!entry) return;
+    saveCardPaymentFields(entry, cardsDomain.cardPaymentFields(entry, total, dateStr));
+  }
+
+  function cardPayFormHtml(cls, balanceId, amount, dateStr, minAmount, saveLabel) {
+    return '<form class="card-pay-form ' + cls + '" data-id="' + esc(balanceId) + '" hidden>' +
+      '<input type="number" class="card-pay-amount" inputmode="decimal" step="0.01" min="' + minAmount + '" value="' + amount.toFixed(2) + '" aria-label="Amount paid" required />' +
+      '<input type="date" class="card-pay-date" value="' + esc(dateStr) + '" aria-label="Date paid" required />' +
+      '<button type="submit">' + saveLabel + "</button>" +
+      '<button type="button" class="card-pay-cancel">Cancel</button>' +
+      "</form>";
+  }
+
+  // Shows/hides a row's pay form from its toggle button, and routes its
+  // submit to `onSave(id, amount, dateStr)`.
+  function wireCardPayForms(container, toggleSelector, onSave) {
+    container.querySelectorAll(toggleSelector).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var form = btn.closest(".card-pay-host").querySelector(".card-pay-form");
+        form.hidden = !form.hidden;
+        if (!form.hidden) form.querySelector(".card-pay-amount").focus();
+      });
+    });
+    container.querySelectorAll(".card-pay-form").forEach(function (form) {
+      form.querySelector(".card-pay-cancel").addEventListener("click", function () { form.hidden = true; });
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = form.querySelector(".card-pay-amount");
+        var amount = parseFloat(input.value);
+        if (!isFinite(amount) || amount < Number(input.min)) { input.focus(); return; }
+        onSave(form.dataset.id, Math.round(amount * 100) / 100, form.querySelector(".card-pay-date").value || todayStr());
+      });
+    });
   }
 
   function renderCalendar() {
@@ -576,7 +626,8 @@ export async function boot() {
             date: new Date(b.dueDate + "T00:00:00"),
             label: c.label + " — payment due",
             type: "payment",
-            amount: b.amount,
+            amount: cardsDomain.remainingDue(b),
+            paidSoFar: cardsDomain.paidSoFar(b),
             balanceId: b.id
           });
         });
@@ -594,11 +645,13 @@ export async function boot() {
       var subClass = days < 0 ? "cal-sub overdue" : "cal-sub";
       var amountRow = ev.amount != null
         ? '<div class="cal-amount-row"><span class="cal-amount">' + fmtMoney(ev.amount) + "</span>" +
-          (ev.balanceId ? '<button type="button" class="btn-bought cal-mark-paid" data-id="' + esc(ev.balanceId) + '">Mark as paid</button>' : "") +
-          "</div>"
+          (ev.paidSoFar > 0 ? '<span class="cal-paid-note">left · ' + fmtMoney(ev.paidSoFar) + " paid</span>" : "") +
+          (ev.balanceId ? '<button type="button" class="btn-bought cal-mark-paid">Mark as paid</button>' : "") +
+          "</div>" +
+          (ev.balanceId ? cardPayFormHtml("cal-pay-form", ev.balanceId, ev.amount, todayStr(), "0.01", "Save payment") : "")
         : "";
       return (
-        '<div class="cal-row">' +
+        '<div class="cal-row card-pay-host">' +
         '<div class="cal-date"><div class="cal-day">' + dayNum + '</div><div class="cal-mon">' + esc(monLbl) + "</div></div>" +
         '<div class="cal-main"><div class="cal-label">' + esc(ev.label) + '</div><div class="' + subClass + '">' + daysAwayLabel(days) + "</div>" + amountRow + "</div>" +
         '<span class="cal-dot" style="background:' + dotVar + '"></span>' +
@@ -606,9 +659,37 @@ export async function boot() {
       );
     }).join("");
 
-    el.querySelectorAll(".cal-mark-paid").forEach(function (btn) {
-      btn.addEventListener("click", function () { markCardBalancePaid(btn.dataset.id); });
-    });
+    // Opens with the amount left prefilled — change it if you paid a
+    // different amount (e.g. extra to cover purchases since the statement).
+    wireCardPayForms(el, ".cal-mark-paid", payCardBalance);
+    renderCardPayments();
+  }
+
+  // The latest statement per card with a payment against it, so a payment
+  // entered wrongly (amount or date) can be corrected.
+  function renderCardPayments() {
+    var el = document.getElementById("card-payments-list");
+    var rows = cardsDomain.latestPaymentPerCard(state.creditCards, state.cardBalances);
+    el.hidden = !rows.length;
+    el.innerHTML = rows.length
+      ? '<div class="edit-group-label">Card payments</div>' + rows.map(function (r) {
+        var b = r.balance;
+        var paid = cardsDomain.paidSoFar(b);
+        var extra = cardsDomain.extraPaid(b);
+        var left = cardsDomain.remainingDue(b);
+        var note = extra > 0
+          ? " (" + fmtMoney(extra) + " extra — comes off the next statement)"
+          : left > 0 ? " (" + fmtMoney(left) + " still to pay)" : "";
+        return '<div class="card-payment-row card-pay-host">' +
+          '<div class="card-payment-main"><div class="card-payment-text"><strong>' + esc(r.card.label) + "</strong> · " +
+          esc(fmtShortDate(b.statementDate)) + " statement " + fmtMoney(b.amount) + " — paid " + fmtMoney(paid) +
+          (b.paidDate ? " on " + esc(fmtShortDate(b.paidDate)) : "") + esc(note) + "</div>" +
+          '<button type="button" class="link-btn card-payment-edit">Edit</button></div>' +
+          cardPayFormHtml("card-payment-edit-form", b.id, paid, b.paidDate || todayStr(), "0", "Save") +
+          "</div>";
+      }).join("")
+      : "";
+    wireCardPayForms(el, ".card-payment-edit", setCardBalancePaidTotal);
   }
 
   function renderCardReminders() {
@@ -623,17 +704,20 @@ export async function boot() {
     el.innerHTML = pending.map(function (p) {
       var d = new Date(p.statementDate + "T00:00:00");
       var dateLabel = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
-      var suggested = Math.round(derivedStatementAmount(p.card, p.statementDate) * 100) / 100;
-      var suggestedAttr = suggested > 0 ? ' value="' + suggested.toFixed(2) + '"' : "";
-      var hint = suggested > 0
-        ? '<div class="card-reminder-hint">Logged on this card since the last statement: ' + fmtMoney(suggested) +
+      var logged = Math.round(derivedStatementAmount(p.card, p.statementDate) * 100) / 100;
+      var credit = cardsDomain.creditFromPreviousStatement(p.card, p.statementDate, state.cardBalances);
+      var suggested = cardsDomain.suggestedStatementAmount(p.card, p.statementDate, state.transactions, state.creditCards, state.cardBalances);
+      var suggestedAttr = logged > 0 ? ' value="' + suggested.toFixed(2) + '"' : "";
+      var hint = logged > 0
+        ? '<div class="card-reminder-hint">Logged on this card since the last statement: ' + fmtMoney(logged) +
+          (credit > 0 ? ", less " + fmtMoney(credit) + " extra paid last time = " + fmtMoney(suggested) : "") +
           " — adjust if the real statement differs (interest, fees, anything not logged)</div>"
         : "";
       return (
         '<div class="card-reminder-row" data-card-id="' + esc(p.card.id) + '" data-stmt-date="' + esc(p.statementDate) + '">' +
         '<div class="card-reminder-text">💳 <strong>' + esc(p.card.label) + "</strong> statement generated " + esc(dateLabel) + " — confirm the balance to pay</div>" +
         hint +
-        '<div class="amount-input"><span class="currency-prefix">£</span><input type="number" inputmode="decimal" step="0.01" min="0.01" class="card-reminder-input" placeholder="0.00"' + suggestedAttr + ' /></div>' +
+        '<div class="amount-input"><span class="currency-prefix">£</span><input type="number" inputmode="decimal" step="0.01" min="0" class="card-reminder-input" placeholder="0.00"' + suggestedAttr + ' /></div>' +
         '<button type="button" class="btn-primary card-reminder-save">Save</button>' +
         "</div>"
       );
@@ -644,7 +728,7 @@ export async function boot() {
         var row = btn.closest(".card-reminder-row");
         var input = row.querySelector(".card-reminder-input");
         var amount = parseFloat(input.value);
-        if (!isFinite(amount) || amount <= 0) { input.focus(); return; }
+        if (!isFinite(amount) || amount < 0) { input.focus(); return; }
         recordCardBalance(row.dataset.cardId, row.dataset.stmtDate, Math.round(amount * 100) / 100);
       });
       btn.previousElementSibling.querySelector("input").addEventListener("keydown", function (e) {
@@ -718,6 +802,7 @@ export async function boot() {
 
   function renderCalendarPanel() {
     document.getElementById("calendar-list").hidden = editingCalendar;
+    if (editingCalendar) document.getElementById("card-payments-list").hidden = true;
     document.getElementById("calendar-edit-form").hidden = !editingCalendar;
     document.getElementById("cal-edit-toggle").textContent = editingCalendar ? "Cancel" : "Edit";
     if (editingCalendar) { renderCalendarEditForm(); } else { renderCalendar(); }
@@ -1286,7 +1371,7 @@ export async function boot() {
     var today = todayStr();
     var overdue = state.cardBalances.filter(function (b) { return !b.paid && b.dueDate < today; });
     if (overdue.length) {
-      var overdueTotal = sumAmounts(overdue);
+      var overdueTotal = overdue.reduce(function (s, b) { return s + cardsDomain.remainingDue(b); }, 0);
       cards.push("<strong>Clear the " + fmtMoney(overdueTotal) + " overdue on your cards first.</strong> " +
         "Card interest runs far above anything a savings account or a fund is likely to return, so paying it off is the highest guaranteed return available to you right now.");
     }
@@ -1923,14 +2008,19 @@ export async function boot() {
   function rowToBalance(r) {
     return {
       id: r.id, cardId: r.card_id, statementDate: r.statement_date, dueDate: r.due_date,
-      amount: Number(r.amount), paid: !!r.paid, paidDate: r.paid_date || null, createdAt: r.created_at
+      amount: Number(r.amount), paid: !!r.paid, paidDate: r.paid_date || null,
+      paidAmount: r.paid_amount == null ? null : Number(r.paid_amount), createdAt: r.created_at
     };
   }
   function balanceToRow(b) {
-    return {
+    var row = {
       id: b.id, user_id: currentUserId, card_id: b.cardId, statement_date: b.statementDate, due_date: b.dueDate,
       amount: b.amount, paid: b.paid, paid_date: b.paidDate || null, created_at: b.createdAt
     };
+    // Only sent when set, so recording a statement still works on a database
+    // that hasn't had the paid_amount column added yet.
+    if (b.paidAmount != null) row.paid_amount = b.paidAmount;
+    return row;
   }
 
   function rowToRecurring(r) {
