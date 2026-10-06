@@ -5,7 +5,7 @@
 // pure functions, so the rendering/wiring code below didn't need to change.
 
 import { todayStr, shiftMonth, esc, genId, nextOccurrence } from "./lib/index.js";
-import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, vehicleFor, spendingTxs } from "./categories/index.js";
+import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, vehicleFor, spendingTxs, subcategoriesFor, subcategoryLabel } from "./categories/index.js";
 import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
@@ -147,6 +147,24 @@ export async function boot() {
     });
   }
 
+  // Rebuilds the subcategory <select> to only offer the options that belong
+  // to the chosen category — a "None" option is always first since
+  // subcategory is optional and most categories have none at all.
+  function populateSubcategorySelect(selectId, categoryId) {
+    var sel = document.getElementById(selectId);
+    sel.innerHTML = "";
+    var noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "None";
+    sel.appendChild(noneOpt);
+    subcategoriesFor(categoryId).forEach(function (s) {
+      var opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = s.label;
+      sel.appendChild(opt);
+    });
+  }
+
   function renderMonthLabel() {
     document.getElementById("month-label").textContent = activeRangeLabel();
     document.getElementById("prev-month").hidden = !!customRange;
@@ -273,11 +291,13 @@ export async function boot() {
         }
         pmBadge = ' <span class="pm-badge"' + titleAttr + '>' + esc(t.paymentMethod) + "</span>";
       }
+      var subLabel = subcategoryLabel(t.categoryId, t.subcategoryId);
       return (
         '<div class="ledger-row" data-id="' + esc(t.id) + '">' +
         '<div class="ledger-date">' + esc(dateShort) + "</div>" +
         '<div class="ledger-main">' +
         '<div class="ledger-cat"><span class="cat-dot" style="background:var(--cat-' + (CAT_INDEX[t.categoryId] + 1) + ')"></span>' + esc(cat.label) +
+        (subLabel ? ' <span class="ledger-subcat">· ' + esc(subLabel) + "</span>" : "") +
         pmBadge + "</div>" +
         (t.note ? '<div class="ledger-note">' + esc(t.note) + "</div>" : "") +
         "</div>" +
@@ -1980,6 +2000,7 @@ export async function boot() {
   function rowToTx(r) {
     return {
       id: r.id, amount: Number(r.amount), date: r.date, categoryId: r.category_id,
+      subcategoryId: r.subcategory_id || null,
       note: r.note || "", recurringId: r.recurring_id || null, recurringOccurrence: r.recurring_occurrence || null,
       paymentMethod: r.payment_method || ""
     };
@@ -1987,6 +2008,7 @@ export async function boot() {
   function txToRow(t) {
     return {
       id: t.id, user_id: currentUserId, amount: t.amount, date: t.date, category_id: t.categoryId,
+      subcategory_id: t.subcategoryId || null,
       note: t.note || "", recurring_id: t.recurringId || null, recurring_occurrence: t.recurringOccurrence || null,
       payment_method: t.paymentMethod || null
     };
@@ -2137,7 +2159,8 @@ export async function boot() {
 
   function addTransaction(data) {
     var t = {
-      id: genId(), amount: data.amount, date: data.date, categoryId: data.categoryId, note: data.note,
+      id: genId(), amount: data.amount, date: data.date, categoryId: data.categoryId,
+      subcategoryId: data.subcategoryId || null, note: data.note,
       recurringId: null, recurringOccurrence: null, paymentMethod: data.paymentMethod || ""
     };
     state.transactions.push(t);
@@ -2295,17 +2318,22 @@ export async function boot() {
 
   function wireForm() {
     document.getElementById("f-date").value = todayStr();
+    document.getElementById("f-category").addEventListener("change", function (e) {
+      populateSubcategorySelect("f-subcategory", e.target.value);
+    });
     document.getElementById("add-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var amount = parseFloat(document.getElementById("f-amount").value);
       var categoryId = document.getElementById("f-category").value;
+      var subcategoryId = document.getElementById("f-subcategory").value || null;
       var date = document.getElementById("f-date").value || todayStr();
       var note = document.getElementById("f-note").value.trim().slice(0, 80);
       var paymentMethod = document.getElementById("f-payment-method").value.trim().slice(0, 40);
       if (!isFinite(amount) || amount <= 0 || !categoryId) return;
-      addTransaction({ amount: Math.round(amount * 100) / 100, date: date, categoryId: categoryId, note: note, paymentMethod: paymentMethod });
+      addTransaction({ amount: Math.round(amount * 100) / 100, date: date, categoryId: categoryId, subcategoryId: subcategoryId, note: note, paymentMethod: paymentMethod });
       document.getElementById("add-form").reset();
       document.getElementById("f-date").value = todayStr();
+      populateSubcategorySelect("f-subcategory", "");
       document.getElementById("f-amount").focus();
     });
   }

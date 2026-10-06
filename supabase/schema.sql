@@ -70,6 +70,11 @@ create index if not exists transactions_recurring_idx on transactions (recurring
 -- picks it up instead of silently skipping the whole create).
 alter table transactions add column if not exists payment_method text;
 
+-- Optional second-level detail under a category (e.g. "fuel" under "car") —
+-- see src/categories/index.js SUBCATEGORIES. Null for any transaction logged
+-- before this existed, or where the category has no subcategories at all.
+alter table transactions add column if not exists subcategory_id text;
+
 -- ── planned purchases ──
 create table if not exists planned_expenses (
   id text primary key,

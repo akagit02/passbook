@@ -16,11 +16,42 @@ export const CATEGORIES = [
   { id: "entertainment", label: "Entertainment", discretionary: true },
   { id: "other", label: "Other" },
   { id: "insurance", label: "Insurance" },
+  { id: "car", label: "Car" },
   { id: "savings", label: "Savings" }
 ];
 
 export const CAT_INDEX = {};
 CATEGORIES.forEach(function (c, i) { CAT_INDEX[c.id] = i; });
+
+// Optional second-level detail under a category. Not every category has
+// subcategories, and a transaction never requires one — `subcategoriesFor`
+// returns an empty list for anything not in this map, which is what lets the
+// add-expense form show "no subcategory" instead of an error for those.
+export const SUBCATEGORIES = {
+  housing: [
+    { id: "emi", label: "EMI" },
+    { id: "house_maintenance", label: "House maintenance" },
+    { id: "home_decoration", label: "Home decoration" }
+  ],
+  car: [
+    { id: "car_maintenance", label: "Car maintenance" },
+    { id: "fuel", label: "Fuel" },
+    { id: "parking", label: "Parking" }
+  ],
+  health: [
+    { id: "supplement", label: "Supplement" },
+    { id: "medicines", label: "Medicines" },
+    { id: "equipment", label: "Equipment" }
+  ]
+};
+
+export function subcategoriesFor(categoryId) { return SUBCATEGORIES[categoryId] || []; }
+
+export function subcategoryLabel(categoryId, subcategoryId) {
+  if (!subcategoryId) return "";
+  var found = subcategoriesFor(categoryId).filter(function (s) { return s.id === subcategoryId; })[0];
+  return found ? found.label : "";
+}
 
 export const SAVINGS_CAT = "savings";
 
