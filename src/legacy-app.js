@@ -15,6 +15,7 @@ import * as insightsDomain from "./insights/index.js";
 import * as savingsDomain from "./savings/index.js";
 import * as debtsDomain from "./debts/index.js";
 import * as healthDomain from "./health/index.js";
+import * as moneyflowDomain from "./moneyflow/index.js";
 
 export async function boot() {
   "use strict";
@@ -1624,6 +1625,7 @@ export async function boot() {
 
   // ---------- financial health (src/health) ----------
 
+  var healthTab = "check"; // "check" | "flow" — the pie only renders while its tab is the one showing
   var healthWindow = { count: 6 }; // { count: n } = last n complete pay periods; { from, to } = custom inclusive range
   var editingHealthTargets = false;
 
@@ -1770,10 +1772,19 @@ export async function boot() {
   }
 
   function renderHealthView() {
+    document.querySelectorAll(".health-tab").forEach(function (btn) {
+      var on = btn.dataset.tab === healthTab;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.getElementById("health-panel-check").hidden = healthTab !== "check";
+    document.getElementById("health-panel-flow").hidden = healthTab !== "flow";
+    if (healthTab === "flow") { renderFlowView(); return; }
+
     var h = healthDomain.computeHealth(state, healthWindow, state.healthThresholds);
     var custom = !!healthWindow.from;
 
-    document.querySelectorAll(".health-win-btn").forEach(function (btn) {
+    document.querySelectorAll("#health-panel-check .health-win-btn").forEach(function (btn) {
       var active = btn.dataset.win === "custom" ? custom : !custom && String(healthWindow.count) === btn.dataset.win;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", active ? "true" : "false");
@@ -1895,7 +1906,7 @@ export async function boot() {
   }
 
   function wireHealth() {
-    document.querySelectorAll(".health-win-btn").forEach(function (btn) {
+    document.querySelectorAll("#health-panel-check .health-win-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         if (btn.dataset.win === "custom") {
           populateHealthRangeSelects();
@@ -1915,6 +1926,262 @@ export async function boot() {
     document.getElementById("health-targets-toggle").addEventListener("click", function () {
       editingHealthTargets = !editingHealthTargets;
       renderHealthTargets();
+    });
+    document.querySelectorAll(".health-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        healthTab = btn.dataset.tab;
+        renderHealthView();
+      });
+    });
+  }
+
+  // ---------- where money goes (src/moneyflow) ----------
+
+  // range: "current" | "last" | "3" | "6" | "12" (pay periods) or "custom",
+  // which uses from/to (inclusive dates). The other three are "" for "all".
+  var flowFilters = { range: "current", from: "", to: "", view: "overview", categoryId: "", subcategoryId: "", paymentMethod: "" };
+
+  function flowRange() {
+    if (flowFilters.range === "custom" && flowFilters.from && flowFilters.to) {
+      var from = flowFilters.from <= flowFilters.to ? flowFilters.from : flowFilters.to;
+      var to = flowFilters.from <= flowFilters.to ? flowFilters.to : flowFilters.from;
+      return { start: from, end: periodsDomain.customRangeEndExclusive({ end: to }) };
+    }
+    return moneyflowDomain.presetRange(flowFilters.range, cycleStartDay());
+  }
+
+  function lastDayOf(range) {
+    var d = new Date(range.end + "T00:00:00");
+    d.setDate(d.getDate() - 1);
+    return d;
+  }
+
+  // Slot 0 is the grey used for anything that isn't a named thing: money
+  // left over, "no subcategory", and the folded-together small slices.
+  function flowColor(slot) { return slot ? "var(--cat-" + slot + ")" : "var(--ink-soft)"; }
+
+  function flowOptions(options, selected) {
+    return options.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (o[0] === selected ? " selected" : "") + ">" + esc(o[1]) + "</option>";
+    }).join("");
+  }
+
+  function flowPctText(share) {
+    var pct = share * 100;
+    return pct > 0 && pct < 0.5 ? "<1%" : Math.round(pct) + "%";
+  }
+
+  function renderFlowFilters() {
+    var f = flowFilters;
+    document.querySelectorAll(".flow-range-btn").forEach(function (btn) {
+      var active = btn.dataset.range === f.range;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    document.getElementById("flow-custom").hidden = f.range !== "custom";
+    document.getElementById("flow-from").value = f.from;
+    document.getElementById("flow-to").value = f.to;
+    document.getElementById("flow-view").value = f.view;
+
+    var cats = CATEGORIES.filter(function (c) { return c.id !== SAVINGS_CAT; }).map(function (c) { return [c.id, c.label]; });
+    document.getElementById("flow-category").innerHTML = flowOptions([["", "All categories"]].concat(cats), f.categoryId);
+
+    var subs = subcategoriesFor(f.categoryId).map(function (s) { return [s.id, s.label]; });
+    var subSel = document.getElementById("flow-subcategory");
+    subSel.innerHTML = flowOptions(
+      [["", subs.length ? "All subcategories" : f.categoryId ? "None for this category" : "Pick a category first"]]
+        .concat(subs.length ? subs.concat([[moneyflowDomain.NONE, "No subcategory"]]) : []),
+      f.subcategoryId
+    );
+    subSel.disabled = !subs.length;
+
+    var methods = moneyflowDomain.paymentMethodsIn(state.transactions).map(function (m) { return [m, m]; });
+    document.getElementById("flow-payment").innerHTML = flowOptions(
+      [["", "Any card or account"]].concat(methods, [[moneyflowDomain.NONE, "Not recorded"]]),
+      f.paymentMethod
+    );
+  }
+
+  function flowTitle(flow) {
+    var f = flowFilters;
+    var catLabel = f.categoryId ? CATEGORIES[CAT_INDEX[f.categoryId]].label : "";
+    var subLabel = !f.subcategoryId ? "" : f.subcategoryId === moneyflowDomain.NONE ? "no subcategory" : subcategoryLabel(f.categoryId, f.subcategoryId);
+    var title;
+    if (flow.dimension === "overview") title = flow.income != null ? "Where your income went" : "Spending and savings";
+    else if (flow.dimension === "vehicle") title = "Savings by where it went";
+    else if (flow.dimension === "category") title = "Spending by category";
+    else if (flow.dimension === "subcategory") title = catLabel + " by subcategory";
+    else title = (catLabel ? catLabel + (subLabel ? " · " + subLabel : "") : "Spending") + " by card or account";
+    if (f.paymentMethod) title += " · " + (f.paymentMethod === moneyflowDomain.NONE ? "no payment method recorded" : "paid with " + f.paymentMethod);
+    return title;
+  }
+
+  function flowFigure(label, value, sub, cls) {
+    return '<div class="flow-figure"><span class="stat-label">' + esc(label) + '</span><span class="stat-value' + (cls ? " " + cls : "") + '">' +
+      esc(value) + '</span><span class="stat-sub">' + esc(sub) + "</span></div>";
+  }
+
+  function renderFlowView() {
+    var f = flowFilters;
+    renderFlowFilters();
+
+    var range = flowRange();
+    var today = todayStr();
+    var rangeLabel = periodsDomain.dateRangeLabel(new Date(range.start + "T00:00:00"), lastDayOf(range));
+    if (range.start <= today && today < range.end) rangeLabel += " · includes today, so this is still filling up";
+    document.getElementById("flow-range-label").textContent = rangeLabel;
+
+    var flow = moneyflowDomain.computeFlow(state, {
+      start: range.start, end: range.end, view: f.view,
+      categoryId: f.categoryId, subcategoryId: f.subcategoryId, paymentMethod: f.paymentMethod
+    }, cycleStartDay());
+
+    var figures = [];
+    if (flow.income != null) figures.push(flowFigure("Income", fmtMoney(flow.income), "for these dates"));
+    figures.push(flowFigure("Spent", fmtMoney(flow.spent), flow.spendCount + (flow.spendCount === 1 ? " expense" : " expenses")));
+    figures.push(flowFigure(
+      "Went into savings", fmtMoney(flow.saved),
+      flow.income > 0 ? Math.round((flow.saved / flow.income) * 100) + "% of income" : flow.savingsCount + (flow.savingsCount === 1 ? " transfer" : " transfers"),
+      flow.saved > 0 ? "positive" : ""
+    ));
+    if (flow.unspent != null) {
+      figures.push(flow.unspent >= 0
+        ? flowFigure("Not spent or saved", fmtMoney(flow.unspent), flow.income > 0 ? Math.round((flow.unspent / flow.income) * 100) + "% of income" : "")
+        : flowFigure("Over income by", fmtMoney(-flow.unspent), "spent and saved more than came in", "negative"));
+    }
+    document.getElementById("flow-figures").innerHTML = figures.join("");
+
+    document.getElementById("flow-title").textContent = flowTitle(flow) + (flow.total > 0 ? " · " + fmtMoney(flow.total) : "");
+    document.getElementById("flow-up").hidden = f.view === "overview" && !f.categoryId;
+
+    var bodyEl = document.getElementById("flow-body");
+    var noteEl = document.getElementById("flow-note");
+    if (!flow.slices.length) {
+      bodyEl.innerHTML = '<p class="empty-state">Nothing logged for these dates and filters.</p>';
+      noteEl.textContent = "";
+      return;
+    }
+
+    var drawn = moneyflowDomain.pieSlices(flow.slices);
+    var drawnKeys = drawn.map(function (s) { return s.key; });
+    var geo = moneyflowDomain.pieGeometry(drawn.map(function (s) { return s.amount; }), 100, 100, 98);
+    var svg = drawn.map(function (s, i) {
+      var tip = s.label + ": " + fmtMoney(s.amount) + " (" + flowPctText(geo[i].share) + ")";
+      return '<path class="flow-slice" d="' + geo[i].d + '" style="fill:' + flowColor(s.color) + '" data-key="' + esc(s.key) + '"' +
+        (s.drill ? ' data-drill="1"' : "") + "><title>" + esc(tip) + "</title></path>";
+    }).join("") + drawn.map(function (s, i) {
+      // Labels go on after every wedge so a neighbouring slice can't paint over one.
+      return geo[i].share >= 0.07 ? '<text class="flow-slice-label" x="' + geo[i].labelX + '" y="' + geo[i].labelY + '">' + flowPctText(geo[i].share) + "</text>" : "";
+    }).join("");
+
+    var unit = flow.dimension === "vehicle" ? ["transfer", "transfers"] : ["expense", "expenses"];
+    var rows = flow.slices.map(function (s) {
+      var folded = drawnKeys.indexOf(s.key) === -1;
+      var word = s.key === "savings" ? ["transfer", "transfers"] : unit;
+      var tag = s.drill ? "button" : "div";
+      return (
+        "<" + tag + (s.drill ? ' type="button"' : "") + ' class="flow-row" data-key="' + esc(s.key) + '" data-slice="' + esc(folded ? "__rest" : s.key) + '">' +
+        '<span class="cat-dot" style="background:' + flowColor(folded ? 0 : s.color) + '"></span>' +
+        '<span class="flow-row-label">' + esc(s.label) + (s.count ? "<small>" + s.count + " " + word[s.count === 1 ? 0 : 1] + "</small>" : "") + "</span>" +
+        '<span class="flow-row-amt">' + fmtMoney(s.amount) + "</span>" +
+        '<span class="flow-row-pct">' + flowPctText(s.amount / flow.total) + "</span>" +
+        "</" + tag + ">"
+      );
+    }).join("");
+
+    bodyEl.innerHTML =
+      '<div class="flow-body"><div class="flow-chart" id="flow-chart"><svg viewBox="0 0 200 200" role="img" aria-label="' +
+      esc(flowTitle(flow)) + ' — pie chart; the same figures are listed alongside">' + svg + "</svg></div>" +
+      '<div class="flow-legend" id="flow-legend">' + rows + "</div></div>";
+
+    var notes = [];
+    if (flow.dimension === "overview") {
+      if (f.paymentMethod) notes.push("Income isn't paid by a card or account, so with a payment method picked this only compares what it paid for.");
+      else if (flow.income == null) notes.push("Add your monthly income on Home to see how much of it was left.");
+      else if (flow.unspent < 0) notes.push("Spending and savings came to " + fmtMoney(-flow.unspent) + " more than income for these dates, so there is nothing left to show as a slice.");
+      else if (flow.unspent > 0) notes.push("\u201cNot spent or saved\u201d is income minus everything logged for these dates. Card purchases count on the day you made them, so it can differ from Left over on Home.");
+    }
+    var periodsCovered = flow.income != null && state.income > 0 ? flow.income / state.income : 0;
+    if (Math.abs(periodsCovered - Math.round(periodsCovered)) > 0.001) {
+      notes.push("These dates cover part of a pay period, so income is your monthly figure shared out by days.");
+    }
+    if (drawn.length < flow.slices.length) notes.push("The smallest " + (flow.slices.length - drawn.length + 1) + " are drawn together as the grey slice \u2014 the list shows each one.");
+    if (flow.slices.some(function (s) { return s.drill; })) notes.push("Tap a slice or a row to look inside it.");
+    noteEl.textContent = notes.join(" ");
+
+    var chartEl = document.getElementById("flow-chart");
+    var byKey = {};
+    flow.slices.forEach(function (s) { byKey[s.key] = s; });
+    function highlight(sliceKey) {
+      chartEl.classList.toggle("is-hovering", !!sliceKey);
+      bodyEl.querySelectorAll(".flow-slice").forEach(function (el) { el.classList.toggle("is-on", el.dataset.key === sliceKey); });
+      bodyEl.querySelectorAll(".flow-row").forEach(function (el) { el.classList.toggle("is-on", !!sliceKey && el.dataset.slice === sliceKey); });
+    }
+    function drillInto(key) {
+      var d = byKey[key] && byKey[key].drill;
+      if (!d) return;
+      if (d.view) f.view = d.view;
+      if (d.categoryId) { f.categoryId = d.categoryId; f.subcategoryId = ""; }
+      if (d.subcategoryId) f.subcategoryId = d.subcategoryId;
+      renderFlowView();
+    }
+    bodyEl.querySelectorAll(".flow-slice").forEach(function (el) {
+      el.addEventListener("mouseenter", function () { highlight(el.dataset.key); });
+      el.addEventListener("mouseleave", function () { highlight(""); });
+      el.addEventListener("click", function () { drillInto(el.dataset.key); });
+    });
+    bodyEl.querySelectorAll(".flow-row").forEach(function (el) {
+      el.addEventListener("mouseenter", function () { highlight(el.dataset.slice); });
+      el.addEventListener("mouseleave", function () { highlight(""); });
+      el.addEventListener("click", function () { drillInto(el.dataset.key); });
+    });
+  }
+
+  function wireFlow() {
+    var f = flowFilters;
+    document.querySelectorAll(".flow-range-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.dataset.range === "custom" && !(f.from && f.to)) {
+          var r = flowRange();
+          f.from = r.start;
+          f.to = todayStr(lastDayOf(r));
+        }
+        f.range = btn.dataset.range;
+        renderFlowView();
+      });
+    });
+    [["flow-from", "from"], ["flow-to", "to"]].forEach(function (pair) {
+      document.getElementById(pair[0]).addEventListener("change", function (e) {
+        // A cleared date box would leave no range to draw — keep the last one.
+        if (e.target.value) f[pair[1]] = e.target.value;
+        renderFlowView();
+      });
+    });
+    document.getElementById("flow-view").addEventListener("change", function (e) {
+      f.view = e.target.value;
+      // The top level and the savings split don't look inside a category.
+      if (f.view === "overview" || f.view === "savings") { f.categoryId = ""; f.subcategoryId = ""; }
+      renderFlowView();
+    });
+    document.getElementById("flow-category").addEventListener("change", function (e) {
+      f.categoryId = e.target.value;
+      f.subcategoryId = "";
+      if (f.categoryId && (f.view === "overview" || f.view === "savings")) f.view = "category";
+      renderFlowView();
+    });
+    document.getElementById("flow-subcategory").addEventListener("change", function (e) {
+      f.subcategoryId = e.target.value;
+      renderFlowView();
+    });
+    document.getElementById("flow-payment").addEventListener("change", function (e) {
+      f.paymentMethod = e.target.value;
+      renderFlowView();
+    });
+    document.getElementById("flow-up").addEventListener("click", function () {
+      if (f.subcategoryId) f.subcategoryId = "";
+      else if (f.categoryId) f.categoryId = "";
+      else f.view = "overview";
+      renderFlowView();
     });
   }
 
@@ -2962,6 +3229,7 @@ export async function boot() {
     wireSavingsForm();
     wireDebtForms();
     wireHealth();
+    wireFlow();
     wireGoalForm();
     wireSavingsFilters();
     wireCalendarEdit();

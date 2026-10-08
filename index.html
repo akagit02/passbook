@@ -746,6 +746,65 @@
   }
   .health-win-btn:hover { border-color: var(--brass); }
   .health-win-btn.active { background: var(--brass-tint); border-color: var(--brass); color: var(--brass-deep); font-weight: 600; }
+  .health-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .health-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    color: var(--ink-soft);
+    padding: 10px 14px;
+    font-size: 0.92rem;
+    min-height: 42px;
+    cursor: pointer;
+  }
+  .health-tab:hover { color: var(--ink); }
+  .health-tab.active { color: var(--brass-deep); border-bottom-color: var(--brass); font-weight: 600; }
+  .health-tabpanel { display: flex; flex-direction: column; gap: 22px; }
+  .health-tabpanel[hidden] { display: none; }
+
+  /* where money goes (pie) */
+  .flow-filters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; margin-bottom: 14px; }
+  @media (min-width: 720px) { .flow-filters { grid-template-columns: repeat(4, 1fr); } }
+  .flow-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .flow-figure { background: var(--paper-sunken); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .flow-figure .stat-value { font-size: 1.1rem; }
+  .flow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .flow-title { font-weight: 600; font-size: 0.95rem; }
+  .flow-body { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: center; }
+  @media (min-width: 720px) { .flow-body { grid-template-columns: 240px 1fr; gap: 28px; } }
+  .flow-chart { width: 100%; max-width: 240px; margin: 0 auto; }
+  .flow-chart svg { display: block; width: 100%; height: auto; }
+  .flow-slice { stroke: var(--paper-raised); stroke-width: 2; stroke-linejoin: round; transition: opacity 0.12s; }
+  .flow-slice[data-drill] { cursor: pointer; }
+  .flow-slice-label { fill: var(--paper-raised); font-family: var(--font-mono); font-size: 11px; font-weight: 500; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .flow-chart.is-hovering .flow-slice:not(.is-on) { opacity: 0.35; }
+  .flow-legend { display: flex; flex-direction: column; min-width: 0; }
+  .flow-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto 3.2em;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 4px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 0.88rem;
+    text-align: left;
+    min-height: 40px;
+  }
+  .flow-row:last-child { border-bottom: none; }
+  button.flow-row { cursor: pointer; }
+  button.flow-row:hover, .flow-row.is-on { background: var(--paper-sunken); }
+  .flow-row .cat-dot { width: 10px; height: 10px; }
+  .flow-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flow-row-label small { color: var(--ink-faint); font-size: 0.76rem; margin-left: 6px; }
+  .flow-row-amt, .flow-row-pct { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+  .flow-row-pct { color: var(--ink-soft); font-size: 0.8rem; }
+  .flow-note { font-size: 0.8rem; color: var(--ink-soft); line-height: 1.45; margin-top: 12px; }
+  .flow-note:empty { display: none; }
   .health-custom { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 12px; }
   .health-custom[hidden] { display: none; }
   .health-verdict {
@@ -1541,6 +1600,69 @@
 
   <div id="view-health" class="view" hidden>
 
+    <div class="health-tabs" role="tablist" aria-label="Financial health sections">
+      <button type="button" class="health-tab" role="tab" id="health-tab-check" data-tab="check" aria-controls="health-panel-check">Health check</button>
+      <button type="button" class="health-tab" role="tab" id="health-tab-flow" data-tab="flow" aria-controls="health-panel-flow">Where money goes</button>
+    </div>
+
+    <div class="health-tabpanel" id="health-panel-flow" role="tabpanel" aria-labelledby="health-tab-flow" hidden>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Where your money goes</h2>
+      </div>
+      <p class="panel-sub health-range" id="flow-range-label"></p>
+      <div class="health-window" role="group" aria-label="Date range">
+        <button type="button" class="health-win-btn flow-range-btn" data-range="current">This period</button>
+        <button type="button" class="health-win-btn flow-range-btn" data-range="last">Last period</button>
+        <button type="button" class="health-win-btn flow-range-btn" data-range="3">Last 3</button>
+        <button type="button" class="health-win-btn flow-range-btn" data-range="6">Last 6</button>
+        <button type="button" class="health-win-btn flow-range-btn" data-range="12">Last 12</button>
+        <button type="button" class="health-win-btn flow-range-btn" data-range="custom">Custom dates</button>
+      </div>
+      <div class="health-custom" id="flow-custom" hidden>
+        <div class="field">
+          <label for="flow-from">From</label>
+          <input type="date" id="flow-from" />
+        </div>
+        <div class="field">
+          <label for="flow-to">To</label>
+          <input type="date" id="flow-to" />
+        </div>
+      </div>
+      <div class="flow-filters">
+        <div class="field">
+          <label for="flow-view">Show</label>
+          <select id="flow-view">
+            <option value="overview">Income, spending and savings</option>
+            <option value="category">Spending by category</option>
+            <option value="payment">Spending by card or account</option>
+            <option value="savings">Savings by where it went</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="flow-category">Category</label>
+          <select id="flow-category"></select>
+        </div>
+        <div class="field">
+          <label for="flow-subcategory">Subcategory</label>
+          <select id="flow-subcategory"></select>
+        </div>
+        <div class="field">
+          <label for="flow-payment">Paid with</label>
+          <select id="flow-payment"></select>
+        </div>
+      </div>
+      <div class="flow-figures" id="flow-figures"></div>
+      <div class="flow-head">
+        <span class="flow-title" id="flow-title"></span>
+        <button type="button" class="link-btn" id="flow-up" hidden>↑ Up a level</button>
+      </div>
+      <div id="flow-body"></div>
+      <p class="flow-note" id="flow-note"></p>
+    </div>
+    </div><!-- /health-panel-flow -->
+
+    <div class="health-tabpanel" id="health-panel-check" role="tabpanel" aria-labelledby="health-tab-check">
     <div class="panel">
       <div class="panel-header">
         <h2>Financial health</h2>
@@ -1575,6 +1697,7 @@
       <p class="panel-sub" style="margin:-6px 0 10px;">Where each measure turns green or amber — anything worse than amber is red. Card discipline isn't adjustable: any overdue statement is red.</p>
       <div id="health-targets"></div>
     </div>
+    </div><!-- /health-panel-check -->
 
   </div><!-- /view-health -->
 
