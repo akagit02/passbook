@@ -2254,15 +2254,29 @@ export async function boot() {
     var p = plannerDomain.computePlanner(state, state.planner);
     var th = p.plan.thresholds;
 
+    var win = p.plan.window;
+    var customWin = typeof win === "object";
     document.querySelectorAll(".planner-win-btn").forEach(function (btn) {
-      var active = String(p.plan.window) === btn.dataset.win;
+      var active = customWin ? btn.dataset.win === "custom" : String(win) === btn.dataset.win;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
-    document.getElementById("planner-basis").textContent = !p.periodsUsed
-      ? "No complete pay period logged yet — type your own figures for now."
-      : "Averages from your last " + p.periodsUsed + " complete pay period" + (p.periodsUsed === 1 ? "" : "s") +
-        (p.periodsUsed < p.plan.window ? " (all there is so far)" : "") + ". Direct debits are read at today's amounts.";
+    document.getElementById("planner-custom").hidden = !customWin;
+    if (customWin) populatePlannerRangeSelects(win);
+
+    var basis;
+    if (!p.periodsUsed) {
+      basis = "Nothing logged in that range yet — type your own figures for now.";
+    } else if (win === "current") {
+      basis = "This pay cycle so far (" + periodLabel(p.periodKeys[0]) + ") — it isn't over yet, so these will keep rising.";
+    } else if (p.periodsUsed === 1) {
+      basis = "Your spending in the pay cycle " + periodLabel(p.periodKeys[0]) + ".";
+    } else {
+      basis = "Average per pay cycle over " + p.periodsUsed + " cycles, " +
+        periodLabel(p.periodKeys[0]).split(" – ")[0] + " to " + periodLabel(p.periodKeys[p.periodsUsed - 1]).split(" – ")[1] +
+        (typeof win === "number" && p.periodsUsed < win ? " (all there is so far)" : "") + ".";
+    }
+    document.getElementById("planner-basis").textContent = basis + " Direct debits are read at today's amounts.";
 
     var lines = p.pots.filter(function (pot) { return pot.builtIn; });
     document.getElementById("planner-lines").innerHTML = lines.map(function (pot) {
@@ -2387,6 +2401,19 @@ export async function boot() {
     }
   }
 
+  // The custom range offers every pay cycle since the first logged
+  // transaction, same as Financial health's custom window.
+  function populatePlannerRangeSelects(win) {
+    var keys = healthDomain.selectablePeriodKeys(state);
+    var optionsHtml = keys.map(function (mk) { return '<option value="' + esc(mk) + '">' + esc(periodLabel(mk)) + "</option>"; }).join("");
+    var from = document.getElementById("planner-from");
+    var to = document.getElementById("planner-to");
+    from.innerHTML = optionsHtml;
+    to.innerHTML = optionsHtml;
+    from.value = keys.indexOf(win.from) !== -1 ? win.from : keys[0];
+    to.value = keys.indexOf(win.to) !== -1 ? win.to : keys[keys.length - 1];
+  }
+
   // Every edit goes through here: change the normalised plan, store it, and
   // redraw. The redraw waits a tick so that tabbing out of one field (which
   // is what fires the change) has already moved focus to the next one — the
@@ -2449,7 +2476,22 @@ export async function boot() {
 
     document.querySelectorAll(".planner-win-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        updatePlanner(function (plan) { plan.window = parseInt(btn.dataset.win, 10); });
+        var win = btn.dataset.win;
+        updatePlanner(function (plan) {
+          if (win === "custom") {
+            // Start a custom range on the last three cycles up to now.
+            var keys = healthDomain.selectablePeriodKeys(state);
+            plan.window = { from: keys[Math.max(0, keys.length - 3)], to: keys[keys.length - 1] };
+          } else {
+            plan.window = plannerDomain.normaliseWindow(win);
+          }
+        });
+      });
+    });
+    ["planner-from", "planner-to"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", function () {
+        var range = { from: document.getElementById("planner-from").value, to: document.getElementById("planner-to").value };
+        updatePlanner(function (plan) { plan.window = plannerDomain.normaliseWindow(range); });
       });
     });
 

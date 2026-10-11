@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_POTS, DEFAULT_THRESHOLDS, bucketForTx, bucketAverages, currentPeriodActuals, fixedCommitments,
-  normalisePlan, resolvePots, potStatus, savingsSummary, savingsNudge, transferList, computePlanner
+  normalisePlan, normaliseWindow, windowKeys, resolvePots, potStatus, savingsSummary, savingsNudge, transferList, computePlanner
 } from "../../src/planner/index.js";
 
 const now = new Date(2026, 8, 16); // 16 Sep 2026 — payday on the 1st, so half-way through period "2026-09"
@@ -81,6 +81,36 @@ describe("planner averages", () => {
     const a = bucketAverages(fixture(), 6, now);
     expect(a.periodsUsed).toBe(3);
     expect(a.averages.groceries).toBe(600);
+  });
+
+  it("can average over just the last pay period, the one in progress, or a custom range", () => {
+    // Aug is the only period with the £300 plumber.
+    expect(bucketAverages(fixture(), "last", now)).toMatchObject({ periodsUsed: 1, keys: ["2026-08"] });
+    expect(bucketAverages(fixture(), "last", now).averages.house).toBe(300);
+
+    // Sep so far: £500 groceries, £200 eating out; direct debits still read from the rules.
+    const cur = bucketAverages(fixture(), "current", now);
+    expect(cur.keys).toEqual(["2026-09"]);
+    expect(cur.averages).toMatchObject({ groceries: 500, flexible: 200, bills: 1200, emis: 200, commute: 0 });
+
+    const custom = bucketAverages(fixture(), { from: "2026-07", to: "2026-08" }, now);
+    expect(custom.keys).toEqual(["2026-07", "2026-08"]);
+    expect(custom.averages.house).toBe(150);
+  });
+
+  it("tidies stored windows", () => {
+    expect(normaliseWindow(6)).toBe(6);
+    expect(normaliseWindow("6")).toBe(6);
+    expect(normaliseWindow("last")).toBe("last");
+    expect(normaliseWindow("current")).toBe("current");
+    expect(normaliseWindow(4)).toBe(3);
+    expect(normaliseWindow(null)).toBe(3);
+    expect(normaliseWindow({ from: "2026-08", to: "2026-06" })).toEqual({ from: "2026-06", to: "2026-08" });
+    expect(normaliseWindow({ from: "rubbish", to: "2026-06" })).toBe(3);
+  });
+
+  it("stops a custom range at the period in progress", () => {
+    expect(windowKeys({ from: "2026-08", to: "2026-12" }, 1, now)).toEqual(["2026-08", "2026-09"]);
   });
 
   it("caps an instalment at what is left and drops inactive rules", () => {

@@ -1843,8 +1843,21 @@
       </div>
       <p class="panel-sub health-range" id="planner-basis"></p>
       <div class="health-window" role="group" aria-label="Averaging window">
-        <button type="button" class="health-win-btn planner-win-btn" data-win="3">Last 3 periods</button>
+        <button type="button" class="health-win-btn planner-win-btn" data-win="current">This pay cycle</button>
+        <button type="button" class="health-win-btn planner-win-btn" data-win="last">Last pay cycle</button>
+        <button type="button" class="health-win-btn planner-win-btn" data-win="3">Last 3</button>
         <button type="button" class="health-win-btn planner-win-btn" data-win="6">Last 6</button>
+        <button type="button" class="health-win-btn planner-win-btn" data-win="custom">Custom</button>
+      </div>
+      <div class="health-custom" id="planner-custom" hidden>
+        <div class="field">
+          <label for="planner-from">From pay cycle</label>
+          <select id="planner-from"></select>
+        </div>
+        <div class="field">
+          <label for="planner-to">To pay cycle</label>
+          <select id="planner-to"></select>
+        </div>
       </div>
       <div id="planner-lines" class="planner-lines"></div>
     </div>

@@ -33,7 +33,35 @@ export const POT_TYPES = [
 ];
 
 export const DEFAULT_THRESHOLDS = { green: 500, amber: 200 };
-export const WINDOW_OPTIONS = [3, 6];
+// What "usual spend" is averaged over: the last 3 or 6 complete pay periods,
+// just the last one, the one in progress ("current", so far), or a custom
+// inclusive range of pay periods ({ from, to }, "YYYY-MM" keys).
+export const WINDOW_OPTIONS = [3, 6, "last", "current"];
+
+var PERIOD_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function normaliseWindow(raw) {
+  if (raw && typeof raw === "object") {
+    if (PERIOD_KEY.test(raw.from) && PERIOD_KEY.test(raw.to)) {
+      return raw.from <= raw.to ? { from: raw.from, to: raw.to } : { from: raw.to, to: raw.from };
+    }
+    return WINDOW_OPTIONS[0];
+  }
+  if (raw === "last" || raw === "current") return raw;
+  return WINDOW_OPTIONS.indexOf(Number(raw)) !== -1 ? Number(raw) : WINDOW_OPTIONS[0];
+}
+
+// The pay-period keys a window covers, oldest first. A custom range never
+// runs past the period in progress — there is nothing logged beyond it.
+export function windowKeys(win, startDay, now) {
+  var cur = currentPeriodKey(startDay, now);
+  if (win === "current") return [cur];
+  if (win === "last") return windowPeriodKeys({ count: 1 }, startDay, now);
+  if (win && typeof win === "object") {
+    return windowPeriodKeys(win, startDay, now).filter(function (mk) { return mk <= cur; });
+  }
+  return windowPeriodKeys({ count: win }, startDay, now);
+}
 
 // How far ahead of the calendar a pot's spending can run before it turns
 // amber — without some slack a single weekly shop on day two would do it.
@@ -146,16 +174,16 @@ export function fixedCommitments(st, now, links) {
 }
 
 // Typical spend per pay period for each bucket, in whole pounds. Hand-logged
-// spending is averaged over the last `count` complete periods that have any
-// history behind them; recurring rules are read at today's amounts instead,
+// spending is averaged over the periods in `win` (see normaliseWindow) that
+// have any history behind them; recurring rules are read at today's amounts instead,
 // because last quarter's average of a direct debit that has since changed
 // (or ended) is simply the wrong number to plan against.
-export function bucketAverages(st, count, now, links) {
+export function bucketAverages(st, win, now, links) {
   now = now || new Date();
   var startDay = cycleStartDay(st.incomeSources);
   var txs = st.transactions || [];
   var first = txs.reduce(function (min, t) { return !min || t.date < min ? t.date : min; }, null);
-  var keys = windowPeriodKeys({ count: count }, startDay, now).filter(function (mk) {
+  var keys = windowKeys(normaliseWindow(win), startDay, now).filter(function (mk) {
     return first && periodEndStr(mk, startDay) > first;
   });
   var rulesById = rulesIndex(st.recurringExpenses);
@@ -168,7 +196,7 @@ export function bucketAverages(st, count, now, links) {
   bucketKeys(links).forEach(function (id) {
     averages[id] = Math.round((keys.length ? totals[id] / keys.length : 0) + (fixed[id] || 0));
   });
-  return { averages: averages, periodsUsed: keys.length };
+  return { averages: averages, periodsUsed: keys.length, keys: keys };
 }
 
 // Spend so far in the current pay period, per bucket, plus how far through
@@ -255,7 +283,7 @@ export function normalisePlan(raw) {
 
   var sv = raw.savings || {};
   return {
-    window: WINDOW_OPTIONS.indexOf(Number(raw.window)) !== -1 ? Number(raw.window) : WINDOW_OPTIONS[0],
+    window: normaliseWindow(raw.window),
     thresholds: thresholds,
     savings: { label: cleanText(sv.label, 40) || "Savings", account: cleanText(sv.account, 40) },
     pots: pots
@@ -371,6 +399,7 @@ export function computePlanner(st, rawPlan, now) {
   return {
     plan: plan,
     periodsUsed: avg.periodsUsed,
+    periodKeys: avg.keys,
     period: { key: actuals.key, daysLeft: actuals.daysLeft, totalDays: actuals.totalDays, elapsed: actuals.elapsed },
     pots: pots,
     summary: summary,
