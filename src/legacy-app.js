@@ -2227,15 +2227,28 @@ export async function boot() {
   function daysToPayday(n) { return n + (n === 1 ? " day" : " days") + " to payday"; }
 
   function plannerPotNote(pot) {
-    if (!pot.bucket) return pot.type === "expense" ? "Plan only — not linked to a direct debit" : "Money you keep";
-    if (pot.fixed) return fmtMoney(pot.spent) + " paid so far this period";
-    if (pot.left < 0) return fmtMoney(-pot.left) + " over — spent " + fmtMoney(pot.spent);
-    return fmtMoney(pot.left) + " left · spent " + fmtMoney(pot.spent);
+    if (pot.bucket) return "";
+    return pot.type === "expense" ? "Plan only — name a direct debit to track it" : "Money you set aside";
   }
 
+  // Planned against actual for one pot. A pot with nothing in the ledger
+  // behind it has no actual to compare, so it shows the plan alone.
+  function plannerFigures(pot) {
+    var rows = "<span>Planned</span><b>" + esc(fmtMoney(pot.planned)) + "</b>";
+    if (pot.bucket) {
+      rows += "<span>Actual</span><b>" + esc(fmtMoney(pot.actual)) + "</b>" +
+        "<span>" + (pot.left < 0 ? "Over by" : "Left") + '</span><b class="is-diff">' +
+        esc(fmtMoney(Math.abs(pot.left))) + "</b>";
+    }
+    return '<div class="gullak-figures">' + rows + "</div>";
+  }
+
+  // The pot drains as the money goes out, so a tracked pot is drawn with the
+  // share of its plan that is still unspent.
   function plannerPotFill(pot) {
-    if (!pot.bucket || pot.fixed) return pot.amount > 0 ? 1 : 0;
-    return pot.amount > 0 ? pot.left / pot.amount : 0;
+    if (!(pot.planned > 0)) return 0;
+    if (!pot.bucket) return 1;
+    return Math.max(0, pot.left / pot.planned);
   }
 
   function plannerInput(potId, field, value, cls, extra) {
@@ -2252,7 +2265,6 @@ export async function boot() {
     var view = document.getElementById("view-planner");
     var focused = document.activeElement && view.contains(document.activeElement) ? document.activeElement.getAttribute("data-fkey") : null;
     var p = plannerDomain.computePlanner(state, state.planner);
-    var th = p.plan.thresholds;
 
     var win = p.plan.window;
     var customWin = typeof win === "object";
@@ -2295,76 +2307,104 @@ export async function boot() {
     var incomeEl = document.getElementById("planner-income");
     var notes = '<div class="note-fan" aria-hidden="true"><span class="gbp-note n50">£50</span><span class="gbp-note n20">£20</span>' +
       '<span class="gbp-note n10">£10</span><span class="gbp-note n5">£5</span></div>';
-    if (s.total == null) {
+    if (s.available == null) {
       incomeEl.innerHTML = '<div class="planner-income">' + notes +
         '<div class="health-sub">Set your monthly income on Home and this will show what your gullaks leave you to save.</div></div>';
     } else {
       var pct = function (n) { return Math.max(0, Math.min(100, (n / state.income) * 100)).toFixed(2); };
-      var saved = Math.max(0, s.unassigned);
+      var loose = Math.max(0, s.unassigned);
       incomeEl.innerHTML = '<div class="planner-income">' + notes +
         '<div><div class="planner-income-figure">' + esc(fmtMoney(state.income)) + "</div>" +
         '<div class="health-sub">income each pay period · ' + esc(daysToPayday(p.period.daysLeft)) + "</div></div></div>" +
         '<div class="alloc-bar" role="img" aria-label="How your income is shared out">' +
-        '<div class="alloc-seg is-expense" style="width:' + pct(s.expenses) + '%"></div>' +
-        (s.named > 0 ? '<div class="alloc-seg is-named" style="width:' + pct(s.named) + '%"></div>' : "") +
-        (saved > 0 ? '<div class="alloc-seg is-saved" style="width:' + pct(saved) + '%"></div>' : "") +
+        '<div class="alloc-seg is-expense" style="width:' + pct(s.plannedExpenses) + '%"></div>' +
+        (s.assigned > 0 ? '<div class="alloc-seg is-named" style="width:' + pct(s.assigned) + '%"></div>' : "") +
+        (loose > 0 ? '<div class="alloc-seg is-saved" style="width:' + pct(loose) + '%"></div>' : "") +
         "</div>" +
-        '<div class="alloc-key"><span><i class="alloc-seg is-expense"></i>Expenses ' + esc(fmtMoney(s.expenses)) + "</span>" +
-        (s.named > 0 ? '<span><i class="alloc-seg is-named"></i>Savings &amp; future plans ' + esc(fmtMoney(s.named)) + "</span>" : "") +
-        '<span><i class="alloc-seg is-saved"></i>Not yet in a gullak ' + esc(fmtMoney(s.unassigned)) + "</span></div>";
+        '<div class="alloc-key"><span><i class="alloc-seg is-expense"></i>Planned expenses ' + esc(fmtMoney(s.plannedExpenses)) + "</span>" +
+        (s.assigned > 0 ? '<span><i class="alloc-seg is-named"></i>In mini gullaks ' + esc(fmtMoney(s.assigned)) + "</span>" : "") +
+        '<span><i class="alloc-seg is-saved"></i>Loose in savings ' + esc(fmtMoney(s.unassigned)) + "</span></div>";
     }
 
     var accounts = {};
     PAYMENT_METHODS.forEach(function (a) { accounts[a] = true; });
     state.savingsContributions.forEach(function (c) { if (c.accountLabel) accounts[c.accountLabel] = true; });
-    p.pots.forEach(function (pot) { if (pot.account) accounts[pot.account] = true; });
+    p.pots.concat(p.miniPots).forEach(function (pot) { if (pot.account) accounts[pot.account] = true; });
     document.getElementById("planner-account-options").innerHTML = Object.keys(accounts).map(function (a) {
       return '<option value="' + esc(a) + '"></option>';
     }).join("");
 
-    document.getElementById("planner-pots").innerHTML = p.pots.map(function (pot, i) {
+    function gullakHtml(pot, uid, cls) {
       var actions = "";
-      if (pot.builtIn && pot.amountEdited) actions += '<button type="button" class="link-btn" data-action="reset-amount" data-pot="' + esc(pot.id) + '">Use usual spend</button>';
+      if (pot.builtIn && pot.plannedEdited && pot.bucket) actions += '<button type="button" class="link-btn" data-action="reset-planned" data-pot="' + esc(pot.id) + '">Use usual spend</button>';
       if (!pot.builtIn) actions += '<button type="button" class="link-btn" data-action="remove" data-pot="' + esc(pot.id) + '">Remove</button>';
-      return '<div class="gullak gullak-' + pot.status + '">' +
-        gullakSvg(i, plannerPotFill(pot)) +
+      var note = plannerPotNote(pot);
+      return '<div class="gullak ' + cls + " gullak-" + pot.status + '">' +
+        gullakSvg(uid, plannerPotFill(pot)) +
         '<span class="gullak-type">' + esc(POT_TYPE_LABELS[pot.type]) + "</span>" +
         plannerInput(pot.id, "label", pot.label, "gullak-label", 'type="text" maxlength="40" aria-label="Gullak name"') +
-        plannerAmountInput(pot.id, "amount", pot.amount, pot.label + " — amount each pay period") +
+        plannerAmountInput(pot.id, "planned", pot.planned, pot.label + " — planned each pay period") +
         plannerInput(pot.id, "account", pot.account, "gullak-account", 'type="text" maxlength="40" list="planner-account-options" placeholder="Account (optional)" aria-label="Account for ' + esc(pot.label) + '"') +
-        '<div class="gullak-note">' + esc(plannerPotNote(pot)) + "</div>" +
+        plannerFigures(pot) +
+        (note ? '<div class="gullak-note">' + esc(note) + "</div>" : "") +
         '<div class="gullak-actions">' + actions + "</div>" +
         "</div>";
+    }
+
+    document.getElementById("planner-pots").innerHTML = p.pots.map(function (pot, i) {
+      return gullakHtml(pot, i, "");
     }).join("");
 
-    var STATE_LABELS = { green: "On target", amber: "Below target", red: "Too low", neutral: "" };
-    var sub = "";
+    var STATE_LABELS = { green: "On plan", amber: "Just short", red: "Behind plan", neutral: "" };
+    var sub = "saved so far this pay cycle · " + daysToPayday(p.period.daysLeft);
     var hint = "";
-    if (s.total != null) {
-      sub = fmtMoney(state.income) + " income − " + fmtMoney(s.expenses) + " expenses";
-      if (s.named > 0) sub += " · " + fmtMoney(s.named) + " of it in your savings and future-plan gullaks";
-      if (s.unassigned < 0) {
-        hint = "Your savings and future-plan gullaks add up to " + fmtMoney(-s.unassigned) + " more than is left after expenses.";
-      } else if (p.nudge) {
-        hint = fmtMoney(p.nudge.shortfall) + " short of " + fmtMoney(p.nudge.target) + ".";
-        if (p.nudge.pot) {
-          hint += p.nudge.pot.overAverage > 0
-            ? " " + p.nudge.pot.label + " is " + fmtMoney(p.nudge.pot.overAverage) + " above what you usually spend."
-            : " " + p.nudge.pot.label + " is your biggest adjustable gullak at " + fmtMoney(p.nudge.pot.amount) + ".";
-        }
+    if (s.unassigned != null && s.unassigned < 0) {
+      hint = "Your mini gullaks come to " + fmtMoney(-s.unassigned) + " more than the savings gullak holds.";
+    } else if (p.nudge) {
+      hint = fmtMoney(p.nudge.shortfall) + " short of the " + fmtMoney(p.nudge.target) + " you planned to save.";
+      if (p.nudge.pot) {
+        hint += p.nudge.pot.overAverage > 0
+          ? " " + p.nudge.pot.label + " is planned " + fmtMoney(p.nudge.pot.overAverage) + " above what you usually spend."
+          : " " + p.nudge.pot.label + " is your biggest adjustable gullak at " + fmtMoney(p.nudge.pot.planned) + ".";
       }
     }
+
+    var figures = "<span>Planned</span>" +
+      plannerAmountInput("@savings", "planned", s.planned, "Planned saving each pay period");
+    if (s.planned != null) {
+      figures += "<span>" + (s.diff >= 0 ? "Ahead by" : "Short by") + '</span><b class="is-diff">' +
+        esc(fmtMoney(Math.abs(s.diff))) + "</b>";
+    }
+    if (s.available != null && s.plannedEdited) {
+      figures += "<span>Income less planned expenses</span>" +
+        '<b><button type="button" class="link-btn" data-action="reset-savings-planned">' + esc(fmtMoney(s.available)) + "</button></b>";
+    }
+
+    var minisSub = s.planned == null
+      ? "Each mini gullak takes its slice out of the savings gullak."
+      : fmtMoney(s.assigned) + " of your " + fmtMoney(s.planned) + " planned saving is in mini gullaks · " +
+        fmtMoney(s.unassigned) + " still loose";
+
     document.getElementById("planner-savings").innerHTML =
       '<div class="gullak gullak-savings gullak-' + s.status + '" id="planner-savings-gullak" data-status="' + s.status + '">' +
-      gullakSvg("savings", s.total > 0 ? 1 : 0) +
+      gullakSvg("savings", s.planned > 0 ? s.actual / s.planned : s.actual > 0 ? 1 : 0) +
       '<div class="gullak-savings-main">' +
       plannerInput("@savings", "label", p.plan.savings.label, "gullak-label", 'type="text" maxlength="40" aria-label="Savings gullak name"') +
-      '<div class="gullak-savings-figure">' + (s.total == null ? "—" : esc(fmtMoney(s.total))) +
+      '<div class="gullak-savings-figure">' + esc(fmtMoney(s.actual)) +
       '<span class="health-state">' + STATE_LABELS[s.status] + "</span></div>" +
-      (sub ? '<div class="health-sub">' + esc(sub) + "</div>" : "") +
+      '<div class="health-sub">' + esc(sub) + "</div>" +
+      '<div class="gullak-figures">' + figures + "</div>" +
       (hint ? '<div class="health-hint">' + esc(hint) + "</div>" : "") +
       plannerInput("@savings", "account", p.plan.savings.account, "gullak-account", 'type="text" maxlength="40" list="planner-account-options" placeholder="Account (optional)" aria-label="Account for savings"') +
-      "</div></div>";
+      "</div></div>" +
+      '<div class="gullak-minis-head"><div><h3>Mini gullaks</h3>' +
+      '<div class="health-sub">' + esc(minisSub) + "</div></div>" +
+      '<button type="button" class="btn-secondary" data-action="add-mini">+ Mini gullak</button></div>' +
+      (p.miniPots.length
+        ? '<div class="gullak-minis">' + p.miniPots.map(function (pot, i) {
+          return gullakHtml(pot, "mini" + i, "gullak-mini");
+        }).join("") + "</div>"
+        : '<div class="empty-state">Add a mini gullak for each place your savings go — an ISA, stocks, a savings account.</div>');
 
     document.getElementById("planner-transfers").innerHTML = p.transfers.length
       ? p.transfers.map(function (t) {
@@ -2374,10 +2414,11 @@ export async function boot() {
       }).join("")
       : '<div class="empty-state">Give a gullak an account and it will show up here.</div>';
 
-    var green = document.getElementById("planner-green");
-    var amber = document.getElementById("planner-amber");
-    if (document.activeElement !== green) green.value = plannerNum(th.green);
-    if (document.activeElement !== amber) amber.value = plannerNum(th.amber);
+    var mg = p.plan.margins;
+    var marginExpense = document.getElementById("planner-margin-expense");
+    var marginSavings = document.getElementById("planner-margin-savings");
+    if (document.activeElement !== marginExpense) marginExpense.value = plannerNum(mg.expense);
+    if (document.activeElement !== marginSavings) marginSavings.value = plannerNum(mg.savings);
 
     document.getElementById("planner-pot-form").hidden = !showingPotForm;
     document.getElementById("planner-add-toggle").textContent = showingPotForm ? "Cancel" : "+ Pot";
@@ -2424,10 +2465,10 @@ export async function boot() {
     mutate(plan);
     state.planner = {
       window: plan.window,
-      thresholds: plan.thresholds,
+      margins: plan.margins,
       savings: plan.savings,
       pots: plan.pots.map(function (pot) {
-        return { id: pot.id, label: pot.label, type: pot.type, estimate: pot.estimate, amount: pot.amount, account: pot.account, recurringId: pot.recurringId };
+        return { id: pot.id, label: pot.label, type: pot.type, estimate: pot.estimate, planned: pot.planned, account: pot.account, recurringId: pot.recurringId };
       })
     };
     dbCall(sb.from("settings").upsert({ user_id: currentUserId, planner: state.planner }, { onConflict: "user_id" }));
@@ -2449,12 +2490,15 @@ export async function boot() {
       var potId = el.dataset.pot;
       var text = el.value.trim();
       updatePlanner(function (plan) {
-        if (potId === "@savings") { plan.savings[field] = text; return; }
+        if (potId === "@savings") {
+          plan.savings[field] = field === "planned" ? plannerMoney(text) : text;
+          return;
+        }
         var pot = plan.pots.filter(function (x) { return x.id === potId; })[0];
         if (!pot) return;
         // A blank name puts a built-in gullak back to its default; one the
         // user added has no default, so a blank is ignored instead.
-        if (field === "label") { if (text || plannerDomain.BUCKET_IDS.indexOf(pot.id) !== -1) pot.label = text; }
+        if (field === "label") { if (text || plannerDomain.BUILT_IN_IDS.indexOf(pot.id) !== -1) pot.label = text; }
         else if (field === "account") pot.account = text;
         else pot[field] = plannerMoney(text);
       });
@@ -2465,12 +2509,23 @@ export async function boot() {
       if (!btn) return;
       var action = btn.dataset.action;
       var potId = btn.dataset.pot;
+      // Adding a mini gullak is the same form as any other, opened with the
+      // type already set to savings so it lands inside the savings gullak.
+      if (action === "add-mini") {
+        showingPotForm = true;
+        renderPlannerView();
+        document.getElementById("pl-type").value = "savings";
+        document.getElementById("pl-link-field").hidden = true;
+        document.getElementById("pl-name").focus();
+        return;
+      }
       updatePlanner(function (plan) {
+        if (action === "reset-savings-planned") { plan.savings.planned = null; return; }
         if (action === "remove") { plan.pots = plan.pots.filter(function (x) { return x.id !== potId; }); return; }
         var pot = plan.pots.filter(function (x) { return x.id === potId; })[0];
         if (!pot) return;
         if (action === "reset-estimate") pot.estimate = null;
-        if (action === "reset-amount") pot.amount = null;
+        if (action === "reset-planned") pot.planned = null;
       });
     });
 
@@ -2520,7 +2575,7 @@ export async function boot() {
       var amount = plannerMoney(document.getElementById("pl-amount").value);
       if (!name || amount == null) return;
       var pot = {
-        id: genId(), label: name, type: type, bucket: null, fixed: false, estimate: null, amount: amount,
+        id: genId(), label: name, type: type, bucket: null, fixed: false, estimate: null, planned: amount,
         account: document.getElementById("pl-account").value.trim(),
         recurringId: type === "expense" ? document.getElementById("pl-link").value || null : null
       };
@@ -2529,13 +2584,13 @@ export async function boot() {
       updatePlanner(function (plan) { plan.pots.push(pot); });
     });
 
-    ["planner-green", "planner-amber"].forEach(function (id) {
+    ["planner-margin-expense", "planner-margin-savings"].forEach(function (id) {
       document.getElementById(id).addEventListener("change", function () {
-        var green = plannerMoney(document.getElementById("planner-green").value);
-        var amber = plannerMoney(document.getElementById("planner-amber").value);
-        var ok = plannerDomain.validThresholds(green, amber);
+        var expense = document.getElementById("planner-margin-expense").value;
+        var savings = document.getElementById("planner-margin-savings").value;
+        var ok = plannerDomain.validMargin(expense) && plannerDomain.validMargin(savings);
         document.getElementById("planner-rules-error").hidden = ok;
-        if (ok) updatePlanner(function (plan) { plan.thresholds = { green: green, amber: amber }; });
+        if (ok) updatePlanner(function (plan) { plan.margins = { expense: Number(expense), savings: Number(savings) }; });
       });
     });
   }

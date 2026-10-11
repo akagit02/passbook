@@ -97,9 +97,9 @@ describe("money flow levels", () => {
   });
 
   it("goes straight to who paid for a category with no subcategories", () => {
-    const f = flow({ view: "category", categoryId: "shopping" });
+    const f = flow({ view: "category", categoryId: "eating_out" });
     expect(f.dimension).toBe("payment");
-    expect(amounts(f)).toEqual([["PCC", 200]]);
+    expect(amounts(f)).toEqual([["RCC", 100]]);
   });
 
   it("splits spending by card or account, with unrecorded ones grouped", () => {

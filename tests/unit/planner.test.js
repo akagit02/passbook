@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_POTS, DEFAULT_THRESHOLDS, bucketForTx, bucketAverages, currentPeriodActuals, fixedCommitments,
-  normalisePlan, normaliseWindow, windowKeys, resolvePots, potStatus, savingsSummary, savingsNudge, transferList, computePlanner
+  DEFAULT_POTS, DEFAULT_SAVINGS_POTS, DEFAULT_MARGINS, bucketForTx, bucketAverages, currentPeriodActuals,
+  fixedCommitments, normalisePlan, normaliseWindow, windowKeys, validMargin, resolvePots, potStatus,
+  savingsStatus, savingsSummary, savingsNudge, transferList, computePlanner
 } from "../../src/planner/index.js";
 
 const now = new Date(2026, 8, 16); // 16 Sep 2026 — payday on the 1st, so half-way through period "2026-09"
+
+const ALL_POT_IDS = DEFAULT_POTS.map((p) => p.id).concat(DEFAULT_SAVINGS_POTS.map((p) => p.id));
 
 // Jun–Aug are the three complete periods. Each has £600 groceries, £90 fuel,
 // £30 parking and £150 eating out by hand; Aug adds a £300 plumber. A £1,200
@@ -25,6 +28,7 @@ function fixture() {
   transactions.push({ id: "gcur", amount: 500, date: "2026-09-04", categoryId: "groceries" });
   transactions.push({ id: "ecur", amount: 200, date: "2026-09-10", categoryId: "eating_out" });
   transactions.push({ id: "mcur", amount: 1200, date: "2026-09-01", categoryId: "housing", recurringId: "mort", recurringOccurrence: "2026-09" });
+  transactions.push({ id: "svcur", amount: 350, date: "2026-09-05", categoryId: "savings" });
 
   return {
     income: 4000,
@@ -62,6 +66,7 @@ describe("planner buckets", () => {
   it("covers every category and leaves savings out", () => {
     expect(bucketForTx({ categoryId: "insurance" }, rules)).toBe("bills");
     expect(bucketForTx({ categoryId: "entertainment" }, rules)).toBe("flexible");
+    expect(bucketForTx({ categoryId: "shopping", subcategoryId: "gift" }, rules)).toBe("flexible");
     expect(bucketForTx({ categoryId: "health" }, rules)).toBe("other");
     expect(bucketForTx({ categoryId: "something-new" }, rules)).toBe("other");
     expect(bucketForTx({ categoryId: "savings" }, rules)).toBe(null);
@@ -137,120 +142,163 @@ describe("planner current period", () => {
     expect(a.daysLeft).toBe(15);
     expect(a.elapsed).toBeCloseTo(16 / 30);
   });
+
+  it("reads actual saving from the ledger rows contributions write", () => {
+    expect(currentPeriodActuals(fixture(), now).saved).toBe(350);
+    // Last period's £400 belongs to last period, not this one.
+    expect(currentPeriodActuals(fixture(), new Date(2026, 7, 16)).saved).toBe(400);
+  });
 });
 
 describe("planner stored plan", () => {
-  it("gives the built-in pots when nothing is stored", () => {
+  it("gives the built-in pots, including the cash-left mini gullak, when nothing is stored", () => {
     const plan = normalisePlan(null);
-    expect(plan.pots.map((p) => p.id)).toEqual(DEFAULT_POTS.map((p) => p.id));
-    expect(plan.thresholds).toEqual(DEFAULT_THRESHOLDS);
+    expect(plan.pots.map((p) => p.id)).toEqual(ALL_POT_IDS);
+    expect(plan.pots.find((p) => p.id === "cash_left")).toMatchObject({ type: "savings", bucket: null, planned: null });
+    expect(plan.margins).toEqual(DEFAULT_MARGINS);
     expect(plan.window).toBe(3);
-    expect(plan.savings).toEqual({ label: "Savings", account: "" });
+    expect(plan.savings).toEqual({ label: "Savings", account: "", planned: null });
   });
 
-  it("keeps renamed labels, amounts and added pots, and drops rubbish", () => {
+  it("keeps renamed labels, planned figures and added pots, and drops rubbish", () => {
     const plan = normalisePlan({
       window: 6,
-      thresholds: { green: 800, amber: 300 },
-      savings: { label: "Rainy day", account: "Marcus" },
+      margins: { expense: 5, savings: 35 },
+      savings: { label: "Rainy day", account: "Marcus", planned: 900 },
       pots: [
-        { id: "groceries", label: "Food", amount: "550", account: "cur acc" },
+        { id: "groceries", label: "Food", planned: "550", account: "cur acc" },
         { id: "commute", estimate: -5 },
-        { id: "x1", label: "Cleaning service", type: "expense", amount: 60 },
-        { id: "x2", label: "Saving for car", type: "future", amount: 150, account: "ISA" },
-        { id: "x3", label: "  ", type: "savings", amount: 10 },
+        { id: "cash_left", label: "Spending money", planned: 120 },
+        { id: "x1", label: "Cleaning service", type: "expense", planned: 60 },
+        { id: "x2", label: "Saving for car", type: "future", planned: 150, account: "ISA" },
+        { id: "x3", label: "  ", type: "savings", planned: 10 },
         { id: "x4", label: "Odd type", type: "nonsense" },
         null
       ]
     });
     expect(plan.window).toBe(6);
-    expect(plan.thresholds).toEqual({ green: 800, amber: 300 });
-    expect(plan.savings).toEqual({ label: "Rainy day", account: "Marcus" });
-    const groceries = plan.pots.find((p) => p.id === "groceries");
-    expect(groceries).toMatchObject({ label: "Food", amount: 550, account: "cur acc", type: "expense" });
+    expect(plan.margins).toEqual({ expense: 5, savings: 35 });
+    expect(plan.savings).toEqual({ label: "Rainy day", account: "Marcus", planned: 900 });
+    expect(plan.pots.find((p) => p.id === "groceries")).toMatchObject({ label: "Food", planned: 550, account: "cur acc", type: "expense" });
+    expect(plan.pots.find((p) => p.id === "cash_left")).toMatchObject({ label: "Spending money", planned: 120 });
     expect(plan.pots.find((p) => p.id === "commute").estimate).toBe(null);
-    expect(plan.pots.slice(DEFAULT_POTS.length).map((p) => [p.id, p.type])).toEqual([["x1", "expense"], ["x2", "future"], ["x4", "expense"]]);
+    expect(plan.pots.slice(ALL_POT_IDS.length).map((p) => [p.id, p.type])).toEqual([["x1", "expense"], ["x2", "future"], ["x4", "expense"]]);
   });
 
-  it("falls back to default thresholds when they are back to front", () => {
-    expect(normalisePlan({ thresholds: { green: 100, amber: 400 } }).thresholds).toEqual(DEFAULT_THRESHOLDS);
+  it("still reads allocations saved under the old 'amount' key", () => {
+    const plan = normalisePlan({ pots: [{ id: "groceries", amount: 480 }] });
+    expect(plan.pots.find((p) => p.id === "groceries").planned).toBe(480);
   });
 
-  it("resolves blanks: estimate from the average, allocation from the estimate", () => {
-    const plan = normalisePlan({ pots: [{ id: "groceries", estimate: 650 }, { id: "flexible", amount: 100 }, { id: "x1", label: "Car fund", type: "future" }] });
+  it("falls back to default margins when they are not a percentage", () => {
+    expect(normalisePlan({ margins: { expense: 150, savings: -2 } }).margins).toEqual(DEFAULT_MARGINS);
+    expect(validMargin(0)).toBe(true);
+    expect(validMargin(100)).toBe(true);
+    expect(validMargin(101)).toBe(false);
+    expect(validMargin("")).toBe(false);
+    expect(validMargin(null)).toBe(false);
+  });
+
+  it("resolves blanks: estimate from the average, planned from the estimate", () => {
+    const plan = normalisePlan({ pots: [{ id: "groceries", estimate: 650 }, { id: "flexible", planned: 100 }, { id: "x1", label: "Car fund", type: "future" }] });
     const pots = resolvePots(plan, bucketAverages(fixture(), 3, now).averages);
     const by = (id) => pots.find((p) => p.id === id);
-    expect(by("groceries")).toMatchObject({ average: 600, estimate: 650, amount: 650, estimateEdited: true, amountEdited: false });
-    expect(by("flexible")).toMatchObject({ average: 150, estimate: 150, amount: 100, amountEdited: true });
-    expect(by("commute")).toMatchObject({ estimate: 120, amount: 120 });
-    expect(by("x1")).toMatchObject({ average: null, estimate: null, amount: 0 });
+    expect(by("groceries")).toMatchObject({ average: 600, estimate: 650, planned: 650, estimateEdited: true, plannedEdited: false });
+    expect(by("flexible")).toMatchObject({ average: 150, estimate: 150, planned: 100, plannedEdited: true });
+    expect(by("commute")).toMatchObject({ estimate: 120, planned: 120 });
+    expect(by("x1")).toMatchObject({ average: null, estimate: null, planned: 0 });
   });
 });
 
 describe("planner colours", () => {
-  const pot = { type: "expense", bucket: "groceries", fixed: false, amount: 600 };
+  const pot = { type: "expense", bucket: "groceries", fixed: false, planned: 600 };
 
-  it("is red over the pot, amber ahead of pace, green otherwise", () => {
-    expect(potStatus(pot, 601, 0.5)).toBe("red");
-    expect(potStatus(pot, 500, 0.5)).toBe("amber"); // 83% used at 50% through
-    expect(potStatus(pot, 380, 0.5)).toBe("green"); // 63% — inside the margin
-    expect(potStatus(pot, 0, 0.1)).toBe("green");
-    expect(potStatus(pot, 600, 1)).toBe("green");
+  it("is red over plan, amber within the margin of it, green below that", () => {
+    expect(potStatus(pot, 601, 10)).toBe("red");
+    expect(potStatus(pot, 600, 10)).toBe("amber"); // exactly on plan
+    expect(potStatus(pot, 540, 10)).toBe("amber"); // exactly 10% short
+    expect(potStatus(pot, 539, 10)).toBe("green");
+    expect(potStatus(pot, 0, 10)).toBe("green");
   });
 
-  it("is red for any spend from an empty pot", () => {
-    expect(potStatus({ type: "expense", bucket: "car", fixed: false, amount: 0 }, 20, 0.5)).toBe("red");
-    expect(potStatus({ type: "expense", bucket: "car", fixed: false, amount: 0 }, 0, 0.5)).toBe("green");
+  it("takes the margin from the plan, so a wider one turns amber sooner", () => {
+    expect(potStatus(pot, 400, 10)).toBe("green");
+    expect(potStatus(pot, 400, 40)).toBe("amber"); // 600 * 0.6 = 360
   });
 
-  it("leaves fixed costs and user-added pots neutral", () => {
-    expect(potStatus({ type: "expense", bucket: "bills", fixed: true, amount: 100 }, 900, 0.1)).toBe("neutral");
-    expect(potStatus({ type: "expense", bucket: null, fixed: false, amount: 60 }, 0, 0.5)).toBe("neutral");
-    expect(potStatus({ type: "future", bucket: null, fixed: false, amount: 150 }, 0, 0.5)).toBe("neutral");
+  it("colours fixed costs too — a direct debit can still overshoot its plan", () => {
+    expect(potStatus({ type: "expense", bucket: "bills", fixed: true, planned: 1200 }, 1300, 10)).toBe("red");
+    expect(potStatus({ type: "expense", bucket: "bills", fixed: true, planned: 1200 }, 900, 10)).toBe("green");
+  });
+
+  it("is red for any spend from a pot planned at nothing", () => {
+    expect(potStatus({ type: "expense", bucket: "car", fixed: false, planned: 0 }, 20, 10)).toBe("red");
+    expect(potStatus({ type: "expense", bucket: "car", fixed: false, planned: 0 }, 0, 10)).toBe("green");
+  });
+
+  it("leaves pots with no ledger behind them neutral", () => {
+    expect(potStatus({ type: "expense", bucket: null, fixed: false, planned: 60 }, 0, 10)).toBe("neutral");
+    expect(potStatus({ type: "future", bucket: null, fixed: false, planned: 150 }, 0, 10)).toBe("neutral");
+  });
+
+  it("colours saving the other way round — beating the plan is green", () => {
+    expect(savingsStatus(700, 700, 20)).toBe("green");
+    expect(savingsStatus(900, 700, 20)).toBe("green");
+    expect(savingsStatus(699, 700, 20)).toBe("amber");
+    expect(savingsStatus(560, 700, 20)).toBe("amber"); // exactly 20% short
+    expect(savingsStatus(559, 700, 20)).toBe("red");
+    expect(savingsStatus(0, null, 20)).toBe("neutral");
   });
 });
 
 describe("planner savings", () => {
   const pots = [
-    { label: "Bills", type: "expense", fixed: true, amount: 1200, average: 1200, account: "cur acc" },
-    { label: "Groceries", type: "expense", fixed: false, amount: 700, average: 600, account: "cur acc" },
-    { label: "Fun", type: "expense", fixed: false, amount: 900, average: 150, account: "" },
-    { label: "Car fund", type: "future", fixed: false, amount: 150, average: null, account: "ISA" }
+    { label: "Bills", type: "expense", fixed: true, planned: 1200, average: 1200, account: "cur acc" },
+    { label: "Groceries", type: "expense", fixed: false, planned: 700, average: 600, account: "cur acc" },
+    { label: "Fun", type: "expense", fixed: false, planned: 900, average: 150, account: "" },
+    { label: "Car fund", type: "future", fixed: false, planned: 150, average: null, account: "ISA" }
   ];
+  const plan = (savings) => ({ savings: Object.assign({ label: "Savings", account: "isa", planned: null }, savings), margins: DEFAULT_MARGINS });
 
-  it("takes expense pots off income and counts savings and future pots as saved", () => {
-    const s = savingsSummary(3500, pots, DEFAULT_THRESHOLDS);
-    expect(s).toEqual({ expenses: 2800, named: 150, total: 700, unassigned: 550, status: "green" });
+  it("plans the saving as income less planned expenses, and tracks it against what was really saved", () => {
+    const s = savingsSummary(3500, pots, plan(), 700);
+    expect(s).toEqual({
+      plannedExpenses: 2800, available: 700, planned: 700, plannedEdited: false,
+      actual: 700, diff: 0, assigned: 150, unassigned: 550, status: "green"
+    });
   });
 
-  it("colours on the 500 and 200 boundaries", () => {
-    expect(savingsSummary(3300, pots, DEFAULT_THRESHOLDS).status).toBe("green"); // exactly 500
-    expect(savingsSummary(3299, pots, DEFAULT_THRESHOLDS).status).toBe("amber");
-    expect(savingsSummary(3000, pots, DEFAULT_THRESHOLDS).status).toBe("amber"); // exactly 200
-    expect(savingsSummary(2999, pots, DEFAULT_THRESHOLDS).status).toBe("red");
-    expect(savingsSummary(2000, pots, DEFAULT_THRESHOLDS)).toMatchObject({ total: -800, status: "red" });
+  it("colours on how far short of plan the saving fell", () => {
+    expect(savingsSummary(3500, pots, plan(), 800).status).toBe("green");
+    expect(savingsSummary(3500, pots, plan(), 699).status).toBe("amber");
+    expect(savingsSummary(3500, pots, plan(), 560).status).toBe("amber");
+    expect(savingsSummary(3500, pots, plan(), 559).status).toBe("red");
+    expect(savingsSummary(3500, pots, plan(), 0)).toMatchObject({ diff: -700, status: "red" });
+  });
+
+  it("uses a planned saving the user typed in place of what income leaves over", () => {
+    const s = savingsSummary(3500, pots, plan({ planned: 1000 }), 700);
+    expect(s).toMatchObject({ available: 700, planned: 1000, plannedEdited: true, diff: -300, unassigned: 850, status: "red" });
   });
 
   it("is neutral without an income figure", () => {
-    expect(savingsSummary(null, pots, DEFAULT_THRESHOLDS)).toMatchObject({ total: null, status: "neutral" });
+    expect(savingsSummary(null, pots, plan(), 400)).toMatchObject({ available: null, planned: null, diff: null, unassigned: null, status: "neutral" });
   });
 
-  it("flags named pots that promise more than is left", () => {
-    expect(savingsSummary(2900, pots, DEFAULT_THRESHOLDS).unassigned).toBe(-50);
+  it("flags mini gullaks that promise more than the savings gullak holds", () => {
+    expect(savingsSummary(2900, pots, plan(), 100).unassigned).toBe(-50);
   });
 
   it("nudges towards the pot furthest above its average", () => {
-    const s = savingsSummary(3100, pots, DEFAULT_THRESHOLDS);
-    const n = savingsNudge(s, pots, DEFAULT_THRESHOLDS);
+    const n = savingsNudge(savingsSummary(3500, pots, plan(), 500), pots);
     expect(n.shortfall).toBe(200);
-    expect(n.pot).toEqual({ label: "Fun", amount: 900, overAverage: 750 });
-    expect(savingsNudge(savingsSummary(3500, pots, DEFAULT_THRESHOLDS), pots, DEFAULT_THRESHOLDS)).toBe(null);
+    expect(n.pot).toEqual({ label: "Fun", planned: 900, overAverage: 750 });
+    expect(savingsNudge(savingsSummary(3500, pots, plan(), 700), pots)).toBe(null);
   });
 
-  it("groups payday transfers by account, case-insensitively, including unassigned savings", () => {
-    const plan = { savings: { label: "Savings", account: "isa" } };
-    const s = savingsSummary(3500, pots, DEFAULT_THRESHOLDS);
-    expect(transferList(pots, plan, s)).toEqual([
+  it("groups payday transfers by account, case-insensitively, including the loose savings", () => {
+    const p = plan();
+    expect(transferList(pots, p, savingsSummary(3500, pots, p, 700))).toEqual([
       { account: "cur acc", total: 1900, pots: [{ label: "Bills", amount: 1200 }, { label: "Groceries", amount: 700 }] },
       { account: "ISA", total: 700, pots: [{ label: "Car fund", amount: 150 }, { label: "Savings", amount: 550 }] }
     ]);
@@ -270,35 +318,46 @@ describe("planner pots linked to a direct debit", () => {
 
   it("counts the direct debit in bills while no pot is linked to it", () => {
     const p = computePlanner(withCleaning(), null, now);
-    expect(p.pots.find((x) => x.id === "bills")).toMatchObject({ amount: 1260, spent: 1260 });
+    expect(p.pots.find((x) => x.id === "bills")).toMatchObject({ planned: 1260, actual: 1260 });
   });
 
   it("moves it out of bills into the linked pot, so it is counted once", () => {
     const plain = computePlanner(withCleaning(), null, now);
-    const p = computePlanner(withCleaning(), { pots: [{ id: "x1", label: "Cleaning service", type: "expense", amount: 60, recurringId: "clean" }] }, now);
-    expect(p.pots.find((x) => x.id === "bills")).toMatchObject({ amount: 1200, spent: 1200 });
-    expect(p.pots.find((x) => x.id === "x1")).toMatchObject({ amount: 60, average: 60, spent: 60, left: 0, fixed: true, status: "neutral" });
-    expect(p.summary.total).toBe(plain.summary.total);
+    const p = computePlanner(withCleaning(), { pots: [{ id: "x1", label: "Cleaning service", type: "expense", planned: 60, recurringId: "clean" }] }, now);
+    expect(p.pots.find((x) => x.id === "bills")).toMatchObject({ planned: 1200, actual: 1200 });
+    expect(p.pots.find((x) => x.id === "x1")).toMatchObject({ planned: 60, average: 60, actual: 60, left: 0, fixed: true, status: "amber" });
+    expect(p.summary.planned).toBe(plain.summary.planned);
   });
 
   it("ignores a link on a savings or future pot", () => {
-    const plan = normalisePlan({ pots: [{ id: "x1", label: "Car fund", type: "future", amount: 100, recurringId: "clean" }] });
+    const plan = normalisePlan({ pots: [{ id: "x1", label: "Car fund", type: "future", planned: 100, recurringId: "clean" }] });
     expect(plan.pots.find((x) => x.id === "x1")).toMatchObject({ recurringId: null, bucket: null });
   });
 });
 
 describe("computePlanner", () => {
-  it("joins plan, averages and this period's spend", () => {
-    const p = computePlanner(fixture(), { pots: [{ id: "x1", label: "Car fund", type: "future", amount: 300 }] }, now);
+  it("joins plan, averages and this period's spend and saving", () => {
+    const p = computePlanner(fixture(), { pots: [{ id: "x1", label: "Car fund", type: "future", planned: 300 }] }, now);
     const by = (id) => p.pots.find((x) => x.id === id);
-    expect(by("groceries")).toMatchObject({ amount: 600, spent: 500, left: 100, status: "amber" });
-    expect(by("flexible")).toMatchObject({ amount: 150, spent: 200, left: -50, status: "red" });
-    expect(by("commute")).toMatchObject({ amount: 120, spent: 0, status: "green" });
-    expect(by("bills").status).toBe("neutral");
-    expect(by("x1")).toMatchObject({ spent: null, status: "neutral" });
-    // 4000 - (1200 + 200 + 600 + 150 + 120 + 100) = 1630 saved, 300 of it named
-    expect(p.summary).toMatchObject({ expenses: 2370, named: 300, total: 1630, unassigned: 1330, status: "green" });
-    expect(p.nudge).toBe(null);
+    expect(by("groceries")).toMatchObject({ planned: 600, actual: 500, left: 100, status: "green" });
+    expect(by("flexible")).toMatchObject({ planned: 150, actual: 200, left: -50, status: "red" });
+    expect(by("commute")).toMatchObject({ planned: 120, actual: 0, status: "green" });
+    expect(by("bills")).toMatchObject({ planned: 1200, actual: 1200, status: "amber" });
     expect(p.period.daysLeft).toBe(15);
+  });
+
+  it("keeps the expense gullaks apart from the mini savings ones", () => {
+    const p = computePlanner(fixture(), { pots: [{ id: "x1", label: "Car fund", type: "future", planned: 300 }] }, now);
+    expect(p.pots.map((x) => x.id)).toEqual(DEFAULT_POTS.map((x) => x.id));
+    expect(p.miniPots.map((x) => x.id)).toEqual(["cash_left", "x1"]);
+  });
+
+  it("plans the saving from what income leaves and compares it with what went in", () => {
+    const p = computePlanner(fixture(), { pots: [{ id: "x1", label: "Car fund", type: "future", planned: 300 }] }, now);
+    // 4000 − (1200 + 200 + 600 + 150 + 120 + 100) = 1630 planned; only £350 actually saved.
+    expect(p.summary).toMatchObject({
+      plannedExpenses: 2370, planned: 1630, actual: 350, diff: -1280, assigned: 300, unassigned: 1330, status: "red"
+    });
+    expect(p.nudge).toMatchObject({ shortfall: 1280, pot: { label: "Groceries", planned: 600 } });
   });
 });

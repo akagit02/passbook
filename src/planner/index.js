@@ -26,13 +26,22 @@ export const DEFAULT_POTS = [
 
 export const BUCKET_IDS = DEFAULT_POTS.map(function (p) { return p.id; });
 
+// Mini gullaks that live inside the savings gullak: each one takes a slice of
+// the planned saving, and what is left unassigned stays in the main pot. Only
+// "cash left" ships as standard — the rest (ISA, stocks, savings account) are
+// for the user to add.
+export const DEFAULT_SAVINGS_POTS = [
+  { id: "cash_left", label: "Cash left" }
+];
+
+// Every pot the app ships with — these can be relabelled but not removed.
+export const BUILT_IN_IDS = BUCKET_IDS.concat(DEFAULT_SAVINGS_POTS.map(function (p) { return p.id; }));
+
 export const POT_TYPES = [
   { id: "expense", label: "Expense" },
   { id: "savings", label: "Savings" },
   { id: "future", label: "Future plan" }
 ];
-
-export const DEFAULT_THRESHOLDS = { green: 500, amber: 200 };
 // What "usual spend" is averaged over: the last 3 or 6 complete pay periods,
 // just the last one, the one in progress ("current", so far), or a custom
 // inclusive range of pay periods ({ from, to }, "YYYY-MM" keys).
@@ -63,12 +72,19 @@ export function windowKeys(win, startDay, now) {
   return windowPeriodKeys({ count: win }, startDay, now);
 }
 
-// How far ahead of the calendar a pot's spending can run before it turns
-// amber — without some slack a single weekly shop on day two would do it.
-export const PACE_MARGIN = 0.15;
+// How far a figure may drift from its plan before the colour changes, as a
+// percentage of the planned amount. An expense within `expense`% of its plan
+// is amber (close to running out); a saving more than `savings`% short of its
+// plan is red. Both are editable in the Colour rules panel.
+export const DEFAULT_MARGINS = { expense: 10, savings: 20 };
+
+function marginFrac(pct) { return Math.max(0, Math.min(100, Number(pct) || 0)) / 100; }
 
 var DEFAULT_BY_ID = {};
 DEFAULT_POTS.forEach(function (p) { DEFAULT_BY_ID[p.id] = p; });
+var DEFAULT_SAVINGS_BY_ID = {};
+DEFAULT_SAVINGS_POTS.forEach(function (p) { DEFAULT_SAVINGS_BY_ID[p.id] = p; });
+function builtInPot(id) { return DEFAULT_BY_ID[id] || DEFAULT_SAVINGS_BY_ID[id] || null; }
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
@@ -199,16 +215,22 @@ export function bucketAverages(st, win, now, links) {
   return { averages: averages, periodsUsed: keys.length, keys: keys };
 }
 
-// Spend so far in the current pay period, per bucket, plus how far through
-// the period today is.
+// Spend so far in the current pay period, per bucket, plus what has actually
+// been put into savings and how far through the period today is. Savings are
+// read from the ledger rows that every contribution writes, so `saved` is
+// money genuinely moved, not money merely planned.
 export function currentPeriodActuals(st, now, links) {
   now = now || new Date();
   var startDay = cycleStartDay(st.incomeSources);
   var key = currentPeriodKey(startDay, now);
   var start = periodStartStr(key, startDay);
   var end = periodEndStr(key, startDay);
-  var spent = addToBuckets(emptyTotals(links), txInRange(st.transactions || [], start, end), rulesIndex(st.recurringExpenses), links, false);
+  var inPeriod = txInRange(st.transactions || [], start, end);
+  var spent = addToBuckets(emptyTotals(links), inPeriod, rulesIndex(st.recurringExpenses), links, false);
   Object.keys(spent).forEach(function (id) { spent[id] = round2(spent[id]); });
+  var saved = round2(inPeriod.reduce(function (sum, t) {
+    return t.categoryId === SAVINGS_CAT ? sum + t.amount : sum;
+  }, 0));
   var dayMs = 86400000;
   var startD = new Date(start + "T00:00:00");
   var endD = new Date(end + "T00:00:00");
@@ -218,6 +240,7 @@ export function currentPeriodActuals(st, now, links) {
   return {
     key: key,
     spent: spent,
+    saved: saved,
     totalDays: totalDays,
     daysLeft: daysLeft,
     elapsed: Math.min(1, Math.max(0, (totalDays - daysLeft + 1) / totalDays))
@@ -238,6 +261,10 @@ export function normalisePlan(raw) {
   var storedById = {};
   stored.forEach(function (p) { storedById[p.id] = p; });
 
+  // Plans saved before allocations were called "planned" stored them as
+  // `amount`; read that so nobody's figures vanish on the way in.
+  function plannedOf(s) { return moneyOrNull(s.planned != null ? s.planned : s.amount); }
+
   var pots = DEFAULT_POTS.map(function (def) {
     var s = storedById[def.id] || {};
     return {
@@ -248,14 +275,28 @@ export function normalisePlan(raw) {
       fixed: !!def.fixed,
       recurringId: null,
       estimate: moneyOrNull(s.estimate),
-      amount: moneyOrNull(s.amount),
+      planned: plannedOf(s),
       account: cleanText(s.account, 40)
     };
+  });
+  DEFAULT_SAVINGS_POTS.forEach(function (def) {
+    var s = storedById[def.id] || {};
+    pots.push({
+      id: def.id,
+      label: cleanText(s.label, 40) || def.label,
+      type: "savings",
+      bucket: null,
+      fixed: false,
+      recurringId: null,
+      estimate: null,
+      planned: plannedOf(s),
+      account: cleanText(s.account, 40)
+    });
   });
   var seen = {};
   stored.forEach(function (s) {
     var id = String(s.id);
-    if (DEFAULT_BY_ID[id] || seen[id]) return;
+    if (builtInPot(id) || seen[id]) return;
     var label = cleanText(s.label, 40);
     if (!label) return;
     seen[id] = true;
@@ -269,103 +310,131 @@ export function normalisePlan(raw) {
       fixed: !!recurringId,
       recurringId: recurringId,
       estimate: null,
-      amount: moneyOrNull(s.amount),
+      planned: plannedOf(s),
       account: cleanText(s.account, 40)
     });
   });
 
-  var th = raw.thresholds || {};
-  var green = moneyOrNull(th.green);
-  var amber = moneyOrNull(th.amber);
-  var thresholds = validThresholds(green, amber)
-    ? { green: green, amber: amber }
-    : { green: DEFAULT_THRESHOLDS.green, amber: DEFAULT_THRESHOLDS.amber };
+  var mg = raw.margins || {};
+  var margins = {
+    expense: validMargin(mg.expense) ? Number(mg.expense) : DEFAULT_MARGINS.expense,
+    savings: validMargin(mg.savings) ? Number(mg.savings) : DEFAULT_MARGINS.savings
+  };
 
   var sv = raw.savings || {};
   return {
     window: normaliseWindow(raw.window),
-    thresholds: thresholds,
-    savings: { label: cleanText(sv.label, 40) || "Savings", account: cleanText(sv.account, 40) },
+    margins: margins,
+    savings: {
+      label: cleanText(sv.label, 40) || "Savings",
+      account: cleanText(sv.account, 40),
+      planned: moneyOrNull(sv.planned)
+    },
     pots: pots
   };
 }
 
-export function validThresholds(green, amber) {
-  return typeof green === "number" && typeof amber === "number" && isFinite(green) && isFinite(amber) && amber >= 0 && green >= amber;
+// A margin is a percentage of the planned figure, so anything outside 0–100
+// is meaningless rather than merely unusual.
+export function validMargin(pct) {
+  var n = Number(pct);
+  return pct !== null && pct !== undefined && pct !== "" && isFinite(n) && n >= 0 && n <= 100;
 }
 
 // Fills in the two numbers each pot can leave blank: the line-item estimate
-// defaults to the calculated average, and the allocation defaults to the
-// estimate — so a brand-new plan is already a complete one.
+// defaults to the calculated average, and the planned allocation defaults to
+// the estimate — so a brand-new plan is already a complete one.
 export function resolvePots(plan, averages) {
   return plan.pots.map(function (p) {
     var average = p.bucket ? averages[p.bucket] || 0 : null;
     var estimate = p.bucket ? (p.estimate != null ? p.estimate : average) : null;
-    var amount = p.amount != null ? p.amount : estimate != null ? estimate : 0;
+    var planned = p.planned != null ? p.planned : estimate != null ? estimate : 0;
     return {
       id: p.id, label: p.label, type: p.type, bucket: p.bucket, fixed: p.fixed, account: p.account,
-      recurringId: p.recurringId, builtIn: !!DEFAULT_BY_ID[p.id],
+      recurringId: p.recurringId, builtIn: !!builtInPot(p.id),
       average: average,
       estimate: estimate,
       estimateEdited: p.estimate != null,
-      amount: amount,
-      amountEdited: p.amount != null
+      planned: planned,
+      plannedEdited: p.planned != null
     };
   });
 }
 
 // ---------- colours ----------
 
-// A pot tracked against the ledger is red once more has been spent than it
-// holds, amber while spending is running ahead of the days gone by (so it
-// will run dry before payday at this rate), green otherwise. Fixed costs and
-// pots with no ledger behind them (the ones the user added) stay neutral.
-export function potStatus(pot, spent, elapsed) {
-  if (pot.type !== "expense" || pot.fixed || !pot.bucket) return "neutral";
-  if (spent > pot.amount) return "red";
-  if (!(spent > 0)) return "green";
-  return spent / pot.amount > elapsed + PACE_MARGIN ? "amber" : "green";
+// How far an expense pot has drifted from its plan: red once more has gone
+// out than was planned, amber while actual spending has come within `margin`
+// percent of the plan (so there is little room left), green below that. A pot
+// with no ledger behind it — one the user added without naming a direct
+// debit — has no actual to compare, so it stays neutral.
+export function potStatus(pot, spent, margin) {
+  if (pot.type !== "expense" || !pot.bucket) return "neutral";
+  if (spent > pot.planned) return "red";
+  if (!(pot.planned > 0)) return "green";
+  return spent >= pot.planned * (1 - marginFrac(margin)) ? "amber" : "green";
 }
 
-// Expense pots come off income; savings and future-plan pots are money being
-// kept, so they count towards the total saved rather than against it.
-// `unassigned` is what's saved but not yet given a named pot — negative when
-// the named pots promise more than is actually left.
-export function savingsSummary(income, pots, thresholds) {
-  var expenses = 0;
-  var named = 0;
+// Saving is the mirror image: beating the plan is green, falling more than
+// `margin` percent short of it is red, and anything between is amber.
+export function savingsStatus(saved, planned, margin) {
+  if (planned == null) return "neutral";
+  if (saved >= planned) return "green";
+  return saved >= planned * (1 - marginFrac(margin)) ? "amber" : "red";
+}
+
+// The savings gullak, planned against actual. Expense pots come off income to
+// leave `available`, which is what the planned saving defaults to until the
+// user types their own figure. `actual` is money really moved into savings
+// this period, and `diff` is how far that beats or misses the plan.
+//
+// The mini gullaks (the savings and future-plan pots) each claim a slice of
+// the planned saving: `assigned` is what they take between them and
+// `unassigned` is what is still loose in the main pot — negative when the
+// minis promise more than the plan holds.
+export function savingsSummary(income, pots, plan, saved) {
+  var plannedExpenses = 0;
+  var assigned = 0;
   pots.forEach(function (p) {
-    if (p.type === "expense") expenses += p.amount; else named += p.amount;
+    if (p.type === "expense") plannedExpenses += p.planned; else assigned += p.planned;
   });
-  var out = { expenses: round2(expenses), named: round2(named), total: null, unassigned: null, status: "neutral" };
-  if (income == null || !(income > 0)) return out;
-  out.total = round2(income - expenses);
-  out.unassigned = round2(out.total - named);
-  out.status = out.total >= thresholds.green ? "green" : out.total >= thresholds.amber ? "amber" : "red";
-  return out;
+  var available = income != null && income > 0 ? round2(income - plannedExpenses) : null;
+  var planned = plan.savings.planned != null ? plan.savings.planned : available;
+  var actual = round2(saved || 0);
+  return {
+    plannedExpenses: round2(plannedExpenses),
+    available: available,
+    planned: planned,
+    plannedEdited: plan.savings.planned != null,
+    actual: actual,
+    diff: planned == null ? null : round2(actual - planned),
+    assigned: round2(assigned),
+    unassigned: planned == null ? null : round2(planned - assigned),
+    status: savingsStatus(actual, planned, plan.margins.savings)
+  };
 }
 
-// When savings fall short of green: by how much, and the adjustable pot most
+// When saving is behind plan: by how much, and the adjustable expense pot most
 // worth looking at — the one furthest above its own average, or failing
 // that simply the largest.
-export function savingsNudge(summary, pots, thresholds) {
-  if (summary.total == null || summary.status === "green") return null;
-  var adjustable = pots.filter(function (p) { return p.type === "expense" && !p.fixed && p.amount > 0; });
-  var above = adjustable.filter(function (p) { return p.average != null && p.amount > p.average; })
-    .sort(function (a, b) { return (b.amount - b.average) - (a.amount - a.average); })[0];
-  var biggest = adjustable.slice().sort(function (a, b) { return b.amount - a.amount; })[0];
+export function savingsNudge(summary, pots) {
+  if (summary.planned == null || summary.status === "green" || summary.status === "neutral") return null;
+  var adjustable = pots.filter(function (p) { return p.type === "expense" && !p.fixed && p.planned > 0; });
+  var above = adjustable.filter(function (p) { return p.average != null && p.planned > p.average; })
+    .sort(function (a, b) { return (b.planned - b.average) - (a.planned - a.average); })[0];
+  var biggest = adjustable.slice().sort(function (a, b) { return b.planned - a.planned; })[0];
   var pick = above || biggest || null;
   return {
-    shortfall: round2(thresholds.green - summary.total),
-    target: thresholds.green,
-    pot: pick ? { label: pick.label, amount: pick.amount, overAverage: above ? round2(above.amount - above.average) : 0 } : null
+    shortfall: round2(summary.planned - summary.actual),
+    target: summary.planned,
+    pot: pick ? { label: pick.label, planned: pick.planned, overAverage: above ? round2(above.planned - above.average) : 0 } : null
   };
 }
 
 // What to move on payday, grouped by the account each pot is parked in.
 // Pots with no account, or nothing allocated, aren't a transfer.
 export function transferList(pots, plan, summary) {
-  var rows = pots.map(function (p) { return { label: p.label, account: p.account, amount: p.amount }; });
+  var rows = pots.map(function (p) { return { label: p.label, account: p.account, amount: p.planned }; });
   if (summary && summary.unassigned > 0) {
     rows.push({ label: plan.savings.label, account: plan.savings.account, amount: summary.unassigned });
   }
@@ -390,20 +459,21 @@ export function computePlanner(st, rawPlan, now) {
   var avg = bucketAverages(st, plan.window, now, links);
   var actuals = currentPeriodActuals(st, now, links);
   var pots = resolvePots(plan, avg.averages).map(function (p) {
-    p.spent = p.bucket ? actuals.spent[p.bucket] : null;
-    p.left = p.bucket ? round2(p.amount - p.spent) : null;
-    p.status = potStatus(p, p.spent || 0, actuals.elapsed);
+    p.actual = p.bucket ? actuals.spent[p.bucket] : null;
+    p.left = p.bucket ? round2(p.planned - p.actual) : null;
+    p.status = potStatus(p, p.actual || 0, plan.margins.expense);
     return p;
   });
-  var summary = savingsSummary(st.income, pots, plan.thresholds);
+  var summary = savingsSummary(st.income, pots, plan, actuals.saved);
   return {
     plan: plan,
     periodsUsed: avg.periodsUsed,
     periodKeys: avg.keys,
     period: { key: actuals.key, daysLeft: actuals.daysLeft, totalDays: actuals.totalDays, elapsed: actuals.elapsed },
-    pots: pots,
+    pots: pots.filter(function (p) { return p.type === "expense"; }),
+    miniPots: pots.filter(function (p) { return p.type !== "expense"; }),
     summary: summary,
-    nudge: savingsNudge(summary, pots, plan.thresholds),
+    nudge: savingsNudge(summary, pots),
     transfers: transferList(pots, plan, summary)
   };
 }

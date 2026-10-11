@@ -981,6 +981,10 @@
   .gullak .gullak-account { font-size: 0.78rem; text-align: center; color: var(--ink-soft); }
   .gullak .amount-input { background: var(--paper-raised); }
   .gullak .amount-input input { border: none; min-height: 36px; padding: 6px; }
+  .gullak-figures { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 0.74rem; color: var(--ink-soft); }
+  .gullak-figures span { min-width: 0; }
+  .gullak-figures b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+  .gullak-figures .is-diff { color: currentColor; }
   .gullak-note { font-size: 0.76rem; color: var(--ink-soft); text-align: center; line-height: 1.4; min-height: 2.1em; }
   .gullak-red .gullak-note { color: var(--negative); font-weight: 600; }
   .gullak-actions { display: flex; justify-content: center; gap: 8px; min-height: 1.3em; }
@@ -997,6 +1001,11 @@
   .gullak-savings.gullak-green { background: var(--positive-tint); }
   .gullak-savings.gullak-amber { background: var(--brass-tint); }
   .gullak-savings .gullak-svg { width: 104px; }
+  /* On a phone the pot and the figures are too cramped side by side. */
+  @media (max-width: 520px) {
+    .gullak-savings { grid-template-columns: 1fr; justify-items: center; }
+    .gullak-savings-main { width: 100%; }
+  }
   .gullak-savings-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .gullak-savings .gullak-label, .gullak-savings .gullak-account { text-align: left; }
   .gullak-savings-figure { font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; color: var(--ink); line-height: 1.1; padding-left: 6px; }
@@ -1006,6 +1015,15 @@
   .gullak-savings.gullak-red .health-state { color: var(--negative); }
   .gullak-savings .health-sub { margin-left: 6px; color: var(--ink-soft); }
   .gullak-savings .health-hint { margin-left: 6px; color: var(--ink); background: var(--paper-raised); }
+  .gullak-savings .gullak-figures { margin-left: 6px; max-width: 320px; font-size: 0.8rem; }
+  .gullak-minis-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 10px; }
+  .gullak-minis-head h3 { font-family: var(--font-display); font-size: 0.95rem; font-weight: 600; margin: 0; }
+  .gullak-minis-head .health-sub { margin: 2px 0 0; }
+  .gullak-minis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  @media (min-width: 640px) { .gullak-minis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1000px) { .gullak-minis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .gullak-mini { padding: 10px 8px; background: var(--paper-sunken); }
+  .gullak-mini .gullak-svg { width: 58px; }
   .planner-transfer { padding: 10px 2px; border-bottom: 1px solid var(--line); }
   .planner-transfer:last-child { border-bottom: none; }
   .planner-rules { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font-size: 0.85rem; color: var(--ink-soft); }
@@ -1883,7 +1901,7 @@
           <input id="pl-name" type="text" maxlength="40" placeholder="e.g. Cleaning service" required />
         </div>
         <div class="field">
-          <label for="pl-amount">Amount each pay period</label>
+          <label for="pl-amount">Planned each pay period</label>
           <div class="amount-input">
             <span class="currency-prefix">£</span>
             <input id="pl-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" required />
@@ -1917,11 +1935,11 @@
         <h2>Colour rules</h2>
       </div>
       <div class="planner-rules">
-        <label>Savings gullak is green from <input type="number" id="planner-green" inputmode="decimal" min="0" step="1" aria-label="Green from, in pounds" /></label>
-        <label>and red below <input type="number" id="planner-amber" inputmode="decimal" min="0" step="1" aria-label="Red below, in pounds" /></label>
+        <label>A spending gullak is amber within <input type="number" id="planner-margin-expense" inputmode="decimal" min="0" max="100" step="1" aria-label="Expense amber margin, percent" />% of its plan</label>
+        <label>and savings turn red more than <input type="number" id="planner-margin-savings" inputmode="decimal" min="0" max="100" step="1" aria-label="Savings red margin, percent" />% short of plan</label>
       </div>
-      <p class="health-target-error" id="planner-rules-error" role="alert" hidden>Green must be the higher of the two.</p>
-      <p class="health-sub" style="margin-top:10px;">A spending gullak turns red once you've spent more than it holds this pay period, and amber while you're spending faster than the days are passing. Bills, EMIs and gullaks you add yourself aren't coloured.</p>
+      <p class="health-target-error" id="planner-rules-error" role="alert" hidden>Both must be a percentage between 0 and 100.</p>
+      <p class="health-sub" style="margin-top:10px;">A spending gullak is green while actual is comfortably under plan, amber once it comes within that margin of the plan, and red once it goes over. Savings work the other way: green once you've saved at least the plan, amber just short of it, red further short. Gullaks you add without naming a direct debit have no actual to compare, so they stay grey.</p>
     </div>
 
   </div><!-- /view-planner -->
