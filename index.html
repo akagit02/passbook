@@ -886,6 +886,139 @@
   .health-target-error { color: var(--negative); font-size: 0.8rem; margin: 0; }
   .health-target-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
+  /* planner */
+  .planner-lines { display: flex; flex-direction: column; }
+  .planner-line {
+    display: grid;
+    grid-template-columns: 1fr 130px;
+    gap: 4px 12px;
+    align-items: center;
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--line);
+  }
+  .planner-line:last-child { border-bottom: none; }
+  .planner-line-label { font-weight: 500; font-size: 0.92rem; }
+  .planner-line-total { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; padding-right: 10px; }
+  .planner-income { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+  .note-fan { display: flex; padding: 6px 0 6px 4px; }
+  .gbp-note {
+    width: 68px;
+    height: 38px;
+    margin-left: -22px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    outline: 1px solid rgba(0, 0, 0, 0.18);
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.9rem;
+    box-shadow: var(--shadow);
+  }
+  .gbp-note:first-child { margin-left: 0; }
+  .gbp-note:nth-child(odd) { transform: rotate(-5deg); }
+  .gbp-note:nth-child(even) { transform: rotate(4deg) translateY(-3px); }
+  .gbp-note.n50 { background: #a8443a; }
+  .gbp-note.n20 { background: #6f559c; }
+  .gbp-note.n10 { background: #b8692c; }
+  .gbp-note.n5 { background: #2f807b; }
+  .planner-income-figure { font-family: var(--font-display); font-size: 1.6rem; font-weight: 600; line-height: 1.1; }
+  .alloc-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--paper-sunken); }
+  .alloc-seg { min-width: 0; }
+  .alloc-seg + .alloc-seg { border-left: 2px solid var(--paper-raised); }
+  .alloc-seg.is-expense { background: var(--cat-12); }
+  .alloc-seg.is-named { background: var(--cat-3); }
+  .alloc-seg.is-saved { background: var(--positive); }
+  .alloc-key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.8rem; color: var(--ink-soft); margin: 8px 0 16px; }
+  .alloc-key span { display: inline-flex; align-items: center; gap: 6px; }
+  .alloc-key i { width: 10px; height: 10px; border-radius: 2px; }
+  .planner-pot-form { box-shadow: none; background: var(--paper-sunken); margin-bottom: 16px; }
+  .planner-pot-form[hidden] { display: none; }
+  .gullak-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (min-width: 640px) { .gullak-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1000px) { .gullak-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .gullak {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 12px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    min-width: 0;
+    color: var(--cat-12);
+  }
+  .gullak-green { color: var(--positive); }
+  .gullak-amber { color: var(--brass); }
+  .gullak-red { color: var(--negative); border-color: var(--negative); background: var(--negative-tint); }
+  .gullak-svg { width: 84px; height: auto; align-self: center; display: block; }
+  .gullak-pot { fill: var(--paper-sunken); }
+  .gullak-fill { fill: currentColor; }
+  .gullak-outline { fill: none; stroke: currentColor; stroke-width: 2.5; }
+  .gullak-band { fill: none; stroke: var(--paper-raised); stroke-width: 2; stroke-dasharray: 1 6; stroke-linecap: round; opacity: 0.85; }
+  .gullak-slot { fill: var(--ink); }
+  .gullak-type {
+    align-self: center;
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+  }
+  .gullak input {
+    width: 100%;
+    min-width: 0;
+    color: var(--ink);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    padding: 5px 6px;
+  }
+  .gullak input:hover, .gullak input:focus { border-color: var(--line); background: var(--paper-raised); }
+  .gullak .gullak-label { font-weight: 600; font-size: 0.9rem; text-align: center; }
+  .gullak .gullak-account { font-size: 0.78rem; text-align: center; color: var(--ink-soft); }
+  .gullak .amount-input { background: var(--paper-raised); }
+  .gullak .amount-input input { border: none; min-height: 36px; padding: 6px; }
+  .gullak-note { font-size: 0.76rem; color: var(--ink-soft); text-align: center; line-height: 1.4; min-height: 2.1em; }
+  .gullak-red .gullak-note { color: var(--negative); font-weight: 600; }
+  .gullak-actions { display: flex; justify-content: center; gap: 8px; min-height: 1.3em; }
+  .gullak-savings {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 6px 16px;
+    align-items: center;
+    padding: 16px;
+    border-width: 2px;
+    border-color: currentColor;
+  }
+  .gullak-savings.gullak-green { background: var(--positive-tint); }
+  .gullak-savings.gullak-amber { background: var(--brass-tint); }
+  .gullak-savings .gullak-svg { width: 104px; }
+  .gullak-savings-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .gullak-savings .gullak-label, .gullak-savings .gullak-account { text-align: left; }
+  .gullak-savings-figure { font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; color: var(--ink); line-height: 1.1; padding-left: 6px; }
+  .gullak-savings-figure .health-state { display: inline-block; white-space: nowrap; }
+  .gullak-savings.gullak-green .health-state { color: var(--positive); }
+  .gullak-savings.gullak-amber .health-state { color: var(--brass-deep); }
+  .gullak-savings.gullak-red .health-state { color: var(--negative); }
+  .gullak-savings .health-sub { margin-left: 6px; color: var(--ink-soft); }
+  .gullak-savings .health-hint { margin-left: 6px; color: var(--ink); background: var(--paper-raised); }
+  .planner-transfer { padding: 10px 2px; border-bottom: 1px solid var(--line); }
+  .planner-transfer:last-child { border-bottom: none; }
+  .planner-rules { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font-size: 0.85rem; color: var(--ink-soft); }
+  .planner-rules label { display: flex; align-items: center; gap: 6px; }
+  .planner-rules input {
+    width: 6em;
+    padding: 7px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+
   /* holdings + ISA meter */
   .holding-row { padding: 8px 0; }
   .holding-top {
@@ -1154,6 +1287,7 @@
   <button type="button" class="side-nav-item" id="nav-savings">🏦 Savings</button>
   <button type="button" class="side-nav-item" id="nav-debt">💳 Debt</button>
   <button type="button" class="side-nav-item" id="nav-health">🩺 Financial health</button>
+  <button type="button" class="side-nav-item" id="nav-planner">🪙 Planner</button>
   <button type="button" class="side-nav-item" id="nav-profile">👤 Profile</button>
 </nav>
 
@@ -1700,6 +1834,84 @@
     </div><!-- /health-panel-check -->
 
   </div><!-- /view-health -->
+
+  <div id="view-planner" class="view" hidden>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>What you usually spend</h2>
+      </div>
+      <p class="panel-sub health-range" id="planner-basis"></p>
+      <div class="health-window" role="group" aria-label="Averaging window">
+        <button type="button" class="health-win-btn planner-win-btn" data-win="3">Last 3 periods</button>
+        <button type="button" class="health-win-btn planner-win-btn" data-win="6">Last 6</button>
+      </div>
+      <div id="planner-lines" class="planner-lines"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Your gullaks</h2>
+        <button type="button" class="btn-secondary" id="planner-add-toggle">+ Pot</button>
+      </div>
+      <div id="planner-income"></div>
+      <form id="planner-pot-form" class="quick-add planner-pot-form" autocomplete="off" hidden>
+        <h2>Add a gullak</h2>
+        <div class="field">
+          <label for="pl-type">Type</label>
+          <select id="pl-type">
+            <option value="expense">Expense</option>
+            <option value="savings">Savings</option>
+            <option value="future">Future plan</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="pl-name">Name</label>
+          <input id="pl-name" type="text" maxlength="40" placeholder="e.g. Cleaning service" required />
+        </div>
+        <div class="field">
+          <label for="pl-amount">Amount each pay period</label>
+          <div class="amount-input">
+            <span class="currency-prefix">£</span>
+            <input id="pl-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="pl-account">Account <span class="opt">(optional)</span></label>
+          <input id="pl-account" type="text" maxlength="40" list="planner-account-options" placeholder="Where it's parked" />
+        </div>
+        <div class="field field-wide" id="pl-link-field">
+          <label for="pl-link">Direct debit it pays for <span class="opt">(optional)</span></label>
+          <select id="pl-link"></select>
+        </div>
+        <button type="submit" class="btn-primary">Add gullak</button>
+      </form>
+      <datalist id="planner-account-options"></datalist>
+      <div id="planner-pots" class="gullak-grid"></div>
+      <div id="planner-savings"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>On payday</h2>
+      </div>
+      <p class="panel-sub" style="margin:-6px 0 10px;">What to move where, from the account you gave each gullak.</p>
+      <div id="planner-transfers"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Colour rules</h2>
+      </div>
+      <div class="planner-rules">
+        <label>Savings gullak is green from <input type="number" id="planner-green" inputmode="decimal" min="0" step="1" aria-label="Green from, in pounds" /></label>
+        <label>and red below <input type="number" id="planner-amber" inputmode="decimal" min="0" step="1" aria-label="Red below, in pounds" /></label>
+      </div>
+      <p class="health-target-error" id="planner-rules-error" role="alert" hidden>Green must be the higher of the two.</p>
+      <p class="health-sub" style="margin-top:10px;">A spending gullak turns red once you've spent more than it holds this pay period, and amber while you're spending faster than the days are passing. Bills, EMIs and gullaks you add yourself aren't coloured.</p>
+    </div>
+
+  </div><!-- /view-planner -->
 
   <footer class="app-footer">
     <p>Private to your household</p>

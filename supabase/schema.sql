@@ -28,6 +28,13 @@ create table if not exists settings (
 -- database where this hasn't been run yet — only saving edited targets fails.
 alter table settings add column if not exists health_thresholds jsonb;
 
+-- The Planner's stored plan: per-gullak labels, allocations and accounts, the
+-- gullaks the user added, and the savings colour boundaries (see
+-- src/planner/index.js normalisePlan). Null means "nothing planned yet" and
+-- the built-in gullaks are used; as with health_thresholds, reading works
+-- without this column and only saving a change fails.
+alter table settings add column if not exists planner jsonb;
+
 -- ── income sources (paydays) ──
 create table if not exists income_sources (
   id text primary key,

@@ -5,7 +5,7 @@
 // pure functions, so the rendering/wiring code below didn't need to change.
 
 import { todayStr, shiftMonth, esc, genId, nextOccurrence } from "./lib/index.js";
-import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, vehicleFor, spendingTxs, subcategoriesFor, subcategoryLabel } from "./categories/index.js";
+import { CATEGORIES, CAT_INDEX, SAVINGS_CAT, SAVINGS_VEHICLES, TIER_LABELS, ISA_ANNUAL_ALLOWANCE, PAYMENT_METHODS, vehicleFor, spendingTxs, subcategoriesFor, subcategoryLabel } from "./categories/index.js";
 import * as periodsDomain from "./periods/index.js";
 import * as cardsDomain from "./cards/index.js";
 import * as cashflowDomain from "./cashflow/index.js";
@@ -16,6 +16,7 @@ import * as savingsDomain from "./savings/index.js";
 import * as debtsDomain from "./debts/index.js";
 import * as healthDomain from "./health/index.js";
 import * as moneyflowDomain from "./moneyflow/index.js";
+import * as plannerDomain from "./planner/index.js";
 
 export async function boot() {
   "use strict";
@@ -50,7 +51,8 @@ export async function boot() {
     savingsGoals: [],
     debts: [],
     debtPayments: [],
-    healthThresholds: healthDomain.normaliseThresholds(null)
+    healthThresholds: healthDomain.normaliseThresholds(null),
+    planner: null
   };
   var viewMonth = null;
   var customRange = null; // {start, end} both "YYYY-MM-DD", inclusive; null = pay-cycle mode via viewMonth
@@ -60,7 +62,7 @@ export async function boot() {
   var recurringListExpanded = false;
   var breakdownExpanded = false;
   var patternsExpanded = false;
-  var currentView = "home"; // "home" | "savings" | "debt" | "health"
+  var currentView = "home"; // "home" | "savings" | "debt" | "health" | "planner"
   var showingGoalForm = false;
   var goalSliderTouched = false; // true once the user has dragged the slider by hand this time round
   var savingsFilters = { year: "all", month: "all", vehicle: "all", goal: "all" };
@@ -2185,6 +2187,317 @@ export async function boot() {
     });
   }
 
+  // ---------- planner (src/planner) ----------
+
+  var showingPotForm = false;
+
+  var POT_TYPE_LABELS = {};
+  plannerDomain.POT_TYPES.forEach(function (t) { POT_TYPE_LABELS[t.id] = t.label; });
+
+  var PLANNER_LINE_HINTS = {
+    bills: "Direct debits, plus rent, utilities and insurance paid by hand",
+    emis: "Instalment direct debits, plus anything logged as Housing → EMI",
+    groceries: "Everything logged as Groceries",
+    flexible: "Shopping, eating out and entertainment",
+    commute: "Transport, fuel and parking",
+    house: "Housing → House maintenance (plumber, electrician…)",
+    car: "Car maintenance and other car costs",
+    other: "Health, home decoration and anything else"
+  };
+
+  // A gullak: round clay pot, knob on top, coin slot on the shoulder.
+  var GULLAK_PATH = "M50 6C46 6 44 9 45 13C45 16 47 17 47 19C24 22 8 38 8 60C8 82 26 98 50 98C74 98 92 82 92 60C92 38 76 22 53 19C53 17 55 16 55 13C56 9 54 6 50 6Z";
+
+  // `frac` is how full to draw it (0–1); the colour comes from the wrapper's
+  // status class via currentColor.
+  function gullakSvg(uid, frac) {
+    var h = Math.round(92 * Math.min(1, Math.max(0, frac)));
+    return '<svg class="gullak-svg" viewBox="0 0 100 104" aria-hidden="true">' +
+      '<defs><clipPath id="gullak-clip-' + uid + '"><path d="' + GULLAK_PATH + '"/></clipPath></defs>' +
+      '<path class="gullak-pot" d="' + GULLAK_PATH + '"/>' +
+      '<rect class="gullak-fill" clip-path="url(#gullak-clip-' + uid + ')" x="0" y="' + (98 - h) + '" width="100" height="' + h + '"/>' +
+      '<path class="gullak-band" d="M10 52Q50 66 90 52"/><path class="gullak-band" d="M12 72Q50 86 88 72"/>' +
+      '<path class="gullak-outline" d="' + GULLAK_PATH + '"/>' +
+      '<rect class="gullak-slot" x="39" y="33" width="22" height="4" rx="2"/>' +
+      "</svg>";
+  }
+
+  function plannerNum(n) { return n == null ? "" : String(Math.round(n * 100) / 100); }
+
+  function daysToPayday(n) { return n + (n === 1 ? " day" : " days") + " to payday"; }
+
+  function plannerPotNote(pot) {
+    if (!pot.bucket) return pot.type === "expense" ? "Plan only — not linked to a direct debit" : "Money you keep";
+    if (pot.fixed) return fmtMoney(pot.spent) + " paid so far this period";
+    if (pot.left < 0) return fmtMoney(-pot.left) + " over — spent " + fmtMoney(pot.spent);
+    return fmtMoney(pot.left) + " left · spent " + fmtMoney(pot.spent);
+  }
+
+  function plannerPotFill(pot) {
+    if (!pot.bucket || pot.fixed) return pot.amount > 0 ? 1 : 0;
+    return pot.amount > 0 ? pot.left / pot.amount : 0;
+  }
+
+  function plannerInput(potId, field, value, cls, extra) {
+    return '<input class="' + cls + '" data-pot="' + esc(potId) + '" data-field="' + field + '" data-fkey="' + esc(potId + ":" + field) +
+      '" value="' + esc(value) + '" ' + extra + " />";
+  }
+
+  function plannerAmountInput(potId, field, value, label) {
+    return '<div class="amount-input"><span class="currency-prefix">£</span>' +
+      plannerInput(potId, field, plannerNum(value), "", 'type="number" inputmode="decimal" step="0.01" min="0" aria-label="' + esc(label) + '"') + "</div>";
+  }
+
+  function renderPlannerView() {
+    var view = document.getElementById("view-planner");
+    var focused = document.activeElement && view.contains(document.activeElement) ? document.activeElement.getAttribute("data-fkey") : null;
+    var p = plannerDomain.computePlanner(state, state.planner);
+    var th = p.plan.thresholds;
+
+    document.querySelectorAll(".planner-win-btn").forEach(function (btn) {
+      var active = String(p.plan.window) === btn.dataset.win;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    document.getElementById("planner-basis").textContent = !p.periodsUsed
+      ? "No complete pay period logged yet — type your own figures for now."
+      : "Averages from your last " + p.periodsUsed + " complete pay period" + (p.periodsUsed === 1 ? "" : "s") +
+        (p.periodsUsed < p.plan.window ? " (all there is so far)" : "") + ". Direct debits are read at today's amounts.";
+
+    var lines = p.pots.filter(function (pot) { return pot.builtIn; });
+    document.getElementById("planner-lines").innerHTML = lines.map(function (pot) {
+      return '<div class="planner-line"><div>' +
+        '<div class="planner-line-label">' + esc(pot.label) + "</div>" +
+        '<div class="health-sub">' + esc(PLANNER_LINE_HINTS[pot.id]) + " · average " + esc(fmtMoney(pot.average)) +
+        (pot.estimateEdited ? ' · <button type="button" class="link-btn" data-action="reset-estimate" data-pot="' + esc(pot.id) + '">Use average</button>' : "") +
+        "</div></div>" +
+        plannerAmountInput(pot.id, "estimate", pot.estimate, pot.label + " — what you usually spend") +
+        "</div>";
+    }).join("") +
+      '<div class="planner-line"><div class="planner-line-label">Total</div><div class="planner-line-total">' +
+      esc(fmtMoney(lines.reduce(function (s, pot) { return s + pot.estimate; }, 0))) + "</div></div>";
+
+    var s = p.summary;
+    var incomeEl = document.getElementById("planner-income");
+    var notes = '<div class="note-fan" aria-hidden="true"><span class="gbp-note n50">£50</span><span class="gbp-note n20">£20</span>' +
+      '<span class="gbp-note n10">£10</span><span class="gbp-note n5">£5</span></div>';
+    if (s.total == null) {
+      incomeEl.innerHTML = '<div class="planner-income">' + notes +
+        '<div class="health-sub">Set your monthly income on Home and this will show what your gullaks leave you to save.</div></div>';
+    } else {
+      var pct = function (n) { return Math.max(0, Math.min(100, (n / state.income) * 100)).toFixed(2); };
+      var saved = Math.max(0, s.unassigned);
+      incomeEl.innerHTML = '<div class="planner-income">' + notes +
+        '<div><div class="planner-income-figure">' + esc(fmtMoney(state.income)) + "</div>" +
+        '<div class="health-sub">income each pay period · ' + esc(daysToPayday(p.period.daysLeft)) + "</div></div></div>" +
+        '<div class="alloc-bar" role="img" aria-label="How your income is shared out">' +
+        '<div class="alloc-seg is-expense" style="width:' + pct(s.expenses) + '%"></div>' +
+        (s.named > 0 ? '<div class="alloc-seg is-named" style="width:' + pct(s.named) + '%"></div>' : "") +
+        (saved > 0 ? '<div class="alloc-seg is-saved" style="width:' + pct(saved) + '%"></div>' : "") +
+        "</div>" +
+        '<div class="alloc-key"><span><i class="alloc-seg is-expense"></i>Expenses ' + esc(fmtMoney(s.expenses)) + "</span>" +
+        (s.named > 0 ? '<span><i class="alloc-seg is-named"></i>Savings &amp; future plans ' + esc(fmtMoney(s.named)) + "</span>" : "") +
+        '<span><i class="alloc-seg is-saved"></i>Not yet in a gullak ' + esc(fmtMoney(s.unassigned)) + "</span></div>";
+    }
+
+    var accounts = {};
+    PAYMENT_METHODS.forEach(function (a) { accounts[a] = true; });
+    state.savingsContributions.forEach(function (c) { if (c.accountLabel) accounts[c.accountLabel] = true; });
+    p.pots.forEach(function (pot) { if (pot.account) accounts[pot.account] = true; });
+    document.getElementById("planner-account-options").innerHTML = Object.keys(accounts).map(function (a) {
+      return '<option value="' + esc(a) + '"></option>';
+    }).join("");
+
+    document.getElementById("planner-pots").innerHTML = p.pots.map(function (pot, i) {
+      var actions = "";
+      if (pot.builtIn && pot.amountEdited) actions += '<button type="button" class="link-btn" data-action="reset-amount" data-pot="' + esc(pot.id) + '">Use usual spend</button>';
+      if (!pot.builtIn) actions += '<button type="button" class="link-btn" data-action="remove" data-pot="' + esc(pot.id) + '">Remove</button>';
+      return '<div class="gullak gullak-' + pot.status + '">' +
+        gullakSvg(i, plannerPotFill(pot)) +
+        '<span class="gullak-type">' + esc(POT_TYPE_LABELS[pot.type]) + "</span>" +
+        plannerInput(pot.id, "label", pot.label, "gullak-label", 'type="text" maxlength="40" aria-label="Gullak name"') +
+        plannerAmountInput(pot.id, "amount", pot.amount, pot.label + " — amount each pay period") +
+        plannerInput(pot.id, "account", pot.account, "gullak-account", 'type="text" maxlength="40" list="planner-account-options" placeholder="Account (optional)" aria-label="Account for ' + esc(pot.label) + '"') +
+        '<div class="gullak-note">' + esc(plannerPotNote(pot)) + "</div>" +
+        '<div class="gullak-actions">' + actions + "</div>" +
+        "</div>";
+    }).join("");
+
+    var STATE_LABELS = { green: "On target", amber: "Below target", red: "Too low", neutral: "" };
+    var sub = "";
+    var hint = "";
+    if (s.total != null) {
+      sub = fmtMoney(state.income) + " income − " + fmtMoney(s.expenses) + " expenses";
+      if (s.named > 0) sub += " · " + fmtMoney(s.named) + " of it in your savings and future-plan gullaks";
+      if (s.unassigned < 0) {
+        hint = "Your savings and future-plan gullaks add up to " + fmtMoney(-s.unassigned) + " more than is left after expenses.";
+      } else if (p.nudge) {
+        hint = fmtMoney(p.nudge.shortfall) + " short of " + fmtMoney(p.nudge.target) + ".";
+        if (p.nudge.pot) {
+          hint += p.nudge.pot.overAverage > 0
+            ? " " + p.nudge.pot.label + " is " + fmtMoney(p.nudge.pot.overAverage) + " above what you usually spend."
+            : " " + p.nudge.pot.label + " is your biggest adjustable gullak at " + fmtMoney(p.nudge.pot.amount) + ".";
+        }
+      }
+    }
+    document.getElementById("planner-savings").innerHTML =
+      '<div class="gullak gullak-savings gullak-' + s.status + '" id="planner-savings-gullak" data-status="' + s.status + '">' +
+      gullakSvg("savings", s.total > 0 ? 1 : 0) +
+      '<div class="gullak-savings-main">' +
+      plannerInput("@savings", "label", p.plan.savings.label, "gullak-label", 'type="text" maxlength="40" aria-label="Savings gullak name"') +
+      '<div class="gullak-savings-figure">' + (s.total == null ? "—" : esc(fmtMoney(s.total))) +
+      '<span class="health-state">' + STATE_LABELS[s.status] + "</span></div>" +
+      (sub ? '<div class="health-sub">' + esc(sub) + "</div>" : "") +
+      (hint ? '<div class="health-hint">' + esc(hint) + "</div>" : "") +
+      plannerInput("@savings", "account", p.plan.savings.account, "gullak-account", 'type="text" maxlength="40" list="planner-account-options" placeholder="Account (optional)" aria-label="Account for savings"') +
+      "</div></div>";
+
+    document.getElementById("planner-transfers").innerHTML = p.transfers.length
+      ? p.transfers.map(function (t) {
+        return '<div class="planner-transfer"><div class="health-top"><span class="health-title">Move to ' + esc(t.account) + "</span>" +
+          '<span class="health-figure">' + esc(fmtMoney(t.total)) + "</span></div>" +
+          '<div class="health-sub">' + esc(t.pots.map(function (x) { return x.label + " " + fmtMoney(x.amount); }).join(" · ")) + "</div></div>";
+      }).join("")
+      : '<div class="empty-state">Give a gullak an account and it will show up here.</div>';
+
+    var green = document.getElementById("planner-green");
+    var amber = document.getElementById("planner-amber");
+    if (document.activeElement !== green) green.value = plannerNum(th.green);
+    if (document.activeElement !== amber) amber.value = plannerNum(th.amber);
+
+    document.getElementById("planner-pot-form").hidden = !showingPotForm;
+    document.getElementById("planner-add-toggle").textContent = showingPotForm ? "Cancel" : "+ Pot";
+    var linked = plannerDomain.planLinks(p.plan);
+    var linkSel = document.getElementById("pl-link");
+    var keep = linkSel.value;
+    linkSel.innerHTML = '<option value="">None — plan only</option>' + state.recurringExpenses.filter(function (r) {
+      return r.active && !linked[r.id];
+    }).map(function (r) {
+      return '<option value="' + esc(r.id) + '">' + esc(r.label + " — " + fmtMoney(r.amount)) + "</option>";
+    }).join("");
+    linkSel.value = keep;
+    if (linkSel.selectedIndex < 0) linkSel.value = "";
+    document.getElementById("pl-link-field").hidden = document.getElementById("pl-type").value !== "expense";
+
+    if (focused) {
+      var again = Array.prototype.filter.call(view.querySelectorAll("[data-fkey]"), function (el) {
+        return el.getAttribute("data-fkey") === focused;
+      })[0];
+      if (again) again.focus();
+    }
+  }
+
+  // Every edit goes through here: change the normalised plan, store it, and
+  // redraw. The redraw waits a tick so that tabbing out of one field (which
+  // is what fires the change) has already moved focus to the next one — the
+  // render then puts focus back where the user actually is. A database
+  // without the planner column yet only fails the save, as with health.
+  function updatePlanner(mutate) {
+    var plan = plannerDomain.normalisePlan(state.planner);
+    mutate(plan);
+    state.planner = {
+      window: plan.window,
+      thresholds: plan.thresholds,
+      savings: plan.savings,
+      pots: plan.pots.map(function (pot) {
+        return { id: pot.id, label: pot.label, type: pot.type, estimate: pot.estimate, amount: pot.amount, account: pot.account, recurringId: pot.recurringId };
+      })
+    };
+    dbCall(sb.from("settings").upsert({ user_id: currentUserId, planner: state.planner }, { onConflict: "user_id" }));
+    setTimeout(function () { if (currentView === "planner") renderPlannerView(); }, 0);
+  }
+
+  function plannerMoney(raw) {
+    var n = parseFloat(raw);
+    return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+  }
+
+  function wirePlanner() {
+    var view = document.getElementById("view-planner");
+
+    view.addEventListener("change", function (e) {
+      var el = e.target;
+      var field = el.dataset && el.dataset.field;
+      if (!field) return;
+      var potId = el.dataset.pot;
+      var text = el.value.trim();
+      updatePlanner(function (plan) {
+        if (potId === "@savings") { plan.savings[field] = text; return; }
+        var pot = plan.pots.filter(function (x) { return x.id === potId; })[0];
+        if (!pot) return;
+        // A blank name puts a built-in gullak back to its default; one the
+        // user added has no default, so a blank is ignored instead.
+        if (field === "label") { if (text || plannerDomain.BUCKET_IDS.indexOf(pot.id) !== -1) pot.label = text; }
+        else if (field === "account") pot.account = text;
+        else pot[field] = plannerMoney(text);
+      });
+    });
+
+    view.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      var action = btn.dataset.action;
+      var potId = btn.dataset.pot;
+      updatePlanner(function (plan) {
+        if (action === "remove") { plan.pots = plan.pots.filter(function (x) { return x.id !== potId; }); return; }
+        var pot = plan.pots.filter(function (x) { return x.id === potId; })[0];
+        if (!pot) return;
+        if (action === "reset-estimate") pot.estimate = null;
+        if (action === "reset-amount") pot.amount = null;
+      });
+    });
+
+    document.querySelectorAll(".planner-win-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        updatePlanner(function (plan) { plan.window = parseInt(btn.dataset.win, 10); });
+      });
+    });
+
+    document.getElementById("planner-add-toggle").addEventListener("click", function () {
+      showingPotForm = !showingPotForm;
+      renderPlannerView();
+      if (showingPotForm) document.getElementById("pl-name").focus();
+    });
+    document.getElementById("pl-type").addEventListener("change", function () {
+      document.getElementById("pl-link-field").hidden = this.value !== "expense";
+    });
+    // Picking a direct debit fills in whatever is still blank from it.
+    document.getElementById("pl-link").addEventListener("change", function () {
+      var id = this.value;
+      var rule = state.recurringExpenses.filter(function (r) { return r.id === id; })[0];
+      if (!rule) return;
+      var name = document.getElementById("pl-name");
+      var amount = document.getElementById("pl-amount");
+      if (!name.value.trim()) name.value = rule.label.slice(0, 40);
+      if (!amount.value) amount.value = plannerNum(rule.amount);
+    });
+    document.getElementById("planner-pot-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var type = document.getElementById("pl-type").value;
+      var name = document.getElementById("pl-name").value.trim();
+      var amount = plannerMoney(document.getElementById("pl-amount").value);
+      if (!name || amount == null) return;
+      var pot = {
+        id: genId(), label: name, type: type, bucket: null, fixed: false, estimate: null, amount: amount,
+        account: document.getElementById("pl-account").value.trim(),
+        recurringId: type === "expense" ? document.getElementById("pl-link").value || null : null
+      };
+      e.target.reset();
+      showingPotForm = false;
+      updatePlanner(function (plan) { plan.pots.push(pot); });
+    });
+
+    ["planner-green", "planner-amber"].forEach(function (id) {
+      document.getElementById(id).addEventListener("change", function () {
+        var green = plannerMoney(document.getElementById("planner-green").value);
+        var amber = plannerMoney(document.getElementById("planner-amber").value);
+        var ok = plannerDomain.validThresholds(green, amber);
+        document.getElementById("planner-rules-error").hidden = ok;
+        if (ok) updatePlanner(function (plan) { plan.thresholds = { green: green, amber: amber }; });
+      });
+    });
+  }
+
   function renderAll() {
     renderMonthLabel();
     renderCardReminders();
@@ -2199,6 +2512,7 @@ export async function boot() {
     if (currentView === "savings") renderSavingsView();
     if (currentView === "debt") renderDebtView();
     if (currentView === "health") renderHealthView();
+    if (currentView === "planner") renderPlannerView();
   }
 
   // The app is a single page with one section visible at a time rather than a
@@ -2211,12 +2525,14 @@ export async function boot() {
     document.getElementById("view-savings").hidden = name !== "savings";
     document.getElementById("view-debt").hidden = name !== "debt";
     document.getElementById("view-health").hidden = name !== "health";
+    document.getElementById("view-planner").hidden = name !== "planner";
     document.querySelector(".month-nav").hidden = name !== "home";
     document.getElementById("range-form").hidden = true;
     document.getElementById("nav-home").classList.toggle("active", name === "home");
     document.getElementById("nav-savings").classList.toggle("active", name === "savings");
     document.getElementById("nav-debt").classList.toggle("active", name === "debt");
     document.getElementById("nav-health").classList.toggle("active", name === "health");
+    document.getElementById("nav-planner").classList.toggle("active", name === "planner");
     closeSideNav();
     renderAll();
   }
@@ -2407,7 +2723,10 @@ export async function boot() {
       debtPayments: (results[10].data || []).map(rowToDebtPayment),
       // A database without the health_thresholds column yet just returns no
       // such field here — the defaults cover it.
-      healthThresholds: healthDomain.normaliseThresholds(settingsRow && settingsRow.health_thresholds)
+      healthThresholds: healthDomain.normaliseThresholds(settingsRow && settingsRow.health_thresholds),
+      // Same again for the planner column: without it this is just null, and
+      // the planner starts from the built-in gullaks.
+      planner: (settingsRow && settingsRow.planner) || null
     };
   }
 
@@ -3209,6 +3528,7 @@ export async function boot() {
     document.getElementById("nav-savings").addEventListener("click", function () { showView("savings"); });
     document.getElementById("nav-debt").addEventListener("click", function () { showView("debt"); });
     document.getElementById("nav-health").addEventListener("click", function () { showView("health"); });
+    document.getElementById("nav-planner").addEventListener("click", function () { showView("planner"); });
     document.getElementById("nav-profile").addEventListener("click", openProfileModal);
     document.getElementById("profile-close").addEventListener("click", closeProfileModal);
     document.getElementById("profile-overlay").addEventListener("click", closeProfileModal);
@@ -3230,6 +3550,7 @@ export async function boot() {
     wireDebtForms();
     wireHealth();
     wireFlow();
+    wirePlanner();
     wireGoalForm();
     wireSavingsFilters();
     wireCalendarEdit();
