@@ -42,6 +42,12 @@ export const SUBCATEGORIES = {
     { id: "supplement", label: "Supplement" },
     { id: "medicines", label: "Medicines" },
     { id: "equipment", label: "Equipment" }
+  ],
+  shopping: [
+    { id: "gift", label: "Gift" },
+    { id: "self", label: "Self" },
+    { id: "home_decor", label: "Home decor" },
+    { id: "home_basic", label: "Home basic" }
   ]
 };
 
