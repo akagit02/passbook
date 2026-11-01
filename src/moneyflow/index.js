@@ -31,11 +31,38 @@ export function presetRange(preset, startDay, now) {
   return { start: periodStartStr(shiftMonth(cur, -n), startDay), end: periodStartStr(cur, startDay) };
 }
 
-// Income is one figure per pay period, so a range earns it once per period
-// it covers, and pro rata by days for a period it only partly covers.
-export function incomeForRange(income, startStr, endExclusiveStr, startDay) {
-  if (income == null || !(endExclusiveStr > startStr)) return income == null ? null : 0;
-  var total = 0;
+// The day this app started watching: the earliest expense ever logged.
+// Savings don't count, because a savings entry is often a balance carried in
+// from before — it says where money already sitting aside came to rest, not
+// that the month it is dated in was being tracked. Null when nothing but
+// savings has ever been logged, which leaves the range alone.
+export function trackingStart(transactions) {
+  return (transactions || []).reduce(function (min, t) {
+    if (isSavingsTx(t)) return min;
+    return !min || t.date < min ? t.date : min;
+  }, null);
+}
+
+function hasTxBetween(transactions, fromStr, toExclusiveStr) {
+  for (var i = 0; i < transactions.length; i++) {
+    var d = transactions[i].date;
+    if (d >= fromStr && d < toExclusiveStr) return true;
+  }
+  return false;
+}
+
+// Income is one figure per pay period, so a range earns it once per period it
+// covers, and pro rata by days for a period it only partly covers.
+//
+// Given `transactions`, a stretch of the range with nothing logged in it earns
+// no income. The income figure describes what comes in now, so applying it to
+// months from before any of this was tracked would invent money that was never
+// counted against anything — the long ranges would just show a swelling "not
+// spent or saved". `periods` is how many pay periods the range touches and
+// `counted` how many of those earned their income.
+export function incomeBreakdown(income, startStr, endExclusiveStr, startDay, transactions) {
+  var out = { total: income == null ? null : 0, periods: 0, counted: 0 };
+  if (income == null || !(endExclusiveStr > startStr)) return out;
   var first = shiftMonth(startStr.slice(0, 7), -1);
   for (var mk = first, i = 0; i < 600; mk = shiftMonth(mk, 1), i++) {
     var pStart = periodStartStr(mk, startDay);
@@ -43,9 +70,18 @@ export function incomeForRange(income, startStr, endExclusiveStr, startDay) {
     var pEnd = periodEndStr(mk, startDay);
     var from = pStart > startStr ? pStart : startStr;
     var to = pEnd < endExclusiveStr ? pEnd : endExclusiveStr;
-    if (to > from) total += income * (daysBetween(from, to) / daysBetween(pStart, pEnd));
+    if (!(to > from)) continue;
+    out.periods++;
+    if (transactions && !hasTxBetween(transactions, from, to)) continue;
+    out.counted++;
+    out.total += income * (daysBetween(from, to) / daysBetween(pStart, pEnd));
   }
-  return round2(total);
+  out.total = round2(out.total);
+  return out;
+}
+
+export function incomeForRange(income, startStr, endExclusiveStr, startDay, transactions) {
+  return incomeBreakdown(income, startStr, endExclusiveStr, startDay, transactions).total;
 }
 
 // Every payment method worth offering as a filter: the built-in shorthands
@@ -122,7 +158,14 @@ function byVehicle(txs, contributions) {
 // `dimension` says what the slices are: "overview", "category",
 // "subcategory", "payment" or "vehicle".
 export function computeFlow(st, f, startDay) {
-  var txs = txInRange(st.transactions || [], f.start, f.end);
+  var all = st.transactions || [];
+  // Dates before tracking began are dropped from the range outright, income
+  // and transactions alike. Keeping either half would skew the pie: the income
+  // of months that were never logged swells "not spent", and a carried-in
+  // savings balance without the income it came from reads as overspending.
+  var began = trackingStart(all);
+  var start = began && began > f.start ? began : f.start;
+  var txs = txInRange(all, start, f.end);
   if (f.paymentMethod) {
     txs = txs.filter(function (t) { return f.paymentMethod === NONE ? !t.paymentMethod : t.paymentMethod === f.paymentMethod; });
   }
@@ -132,11 +175,16 @@ export function computeFlow(st, f, startDay) {
   var saved = sum(savingsTxs);
   // Income isn't paid "by" a card or account, so once a payment method is
   // picked there is no income figure to compare against.
-  var income = f.paymentMethod ? null : incomeForRange(st.income, f.start, f.end, startDay);
+  var inc = f.paymentMethod
+    ? { total: null, periods: 0, counted: 0 }
+    : incomeBreakdown(st.income, start, f.end, startDay, all);
+  var income = inc.total;
   var unspent = income == null ? null : round2(income - spent - saved);
 
   var out = {
     spent: spent, saved: saved, income: income, unspent: unspent,
+    incomePeriods: inc.periods, incomePeriodsCounted: inc.counted,
+    start: start, end: f.end, startedOn: start > f.start ? start : null,
     spendCount: spendTxs.length, savingsCount: savingsTxs.length
   };
 

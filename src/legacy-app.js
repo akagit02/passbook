@@ -2018,6 +2018,18 @@ export async function boot() {
     return title;
   }
 
+  function flowDayLabel(dateStr) {
+    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  // Pay periods with nothing logged earn no income (see incomeBreakdown), so
+  // say when the figure covers fewer periods than the dates suggest.
+  function flowIncomeSub(flow) {
+    if (!flow.incomePeriods || !flow.incomePeriodsCounted) return "nothing logged in these dates";
+    if (flow.incomePeriodsCounted === flow.incomePeriods) return "for these dates";
+    return "only the " + flow.incomePeriodsCounted + " of " + flow.incomePeriods + " pay periods you logged";
+  }
+
   function flowFigure(label, value, sub, cls) {
     return '<div class="flow-figure"><span class="stat-label">' + esc(label) + '</span><span class="stat-value' + (cls ? " " + cls : "") + '">' +
       esc(value) + '</span><span class="stat-sub">' + esc(sub) + "</span></div>";
@@ -2029,17 +2041,22 @@ export async function boot() {
 
     var range = flowRange();
     var today = todayStr();
-    var rangeLabel = periodsDomain.dateRangeLabel(new Date(range.start + "T00:00:00"), lastDayOf(range));
-    if (range.start <= today && today < range.end) rangeLabel += " · includes today, so this is still filling up";
-    document.getElementById("flow-range-label").textContent = rangeLabel;
 
     var flow = moneyflowDomain.computeFlow(state, {
       start: range.start, end: range.end, view: f.view,
       categoryId: f.categoryId, subcategoryId: f.subcategoryId, paymentMethod: f.paymentMethod
     }, cycleStartDay());
 
+    // The label shows the dates actually counted, which start where logging
+    // did however far back the range reaches.
+    var shown = flow.start < range.end ? flow.start : range.start;
+    var rangeLabel = periodsDomain.dateRangeLabel(new Date(shown + "T00:00:00"), lastDayOf(range));
+    if (flow.startedOn) rangeLabel += " · from when you started logging";
+    if (range.start <= today && today < range.end) rangeLabel += " · includes today, so this is still filling up";
+    document.getElementById("flow-range-label").textContent = rangeLabel;
+
     var figures = [];
-    if (flow.income != null) figures.push(flowFigure("Income", fmtMoney(flow.income), "for these dates"));
+    if (flow.income != null) figures.push(flowFigure("Income", fmtMoney(flow.income), flowIncomeSub(flow)));
     figures.push(flowFigure("Spent", fmtMoney(flow.spent), flow.spendCount + (flow.spendCount === 1 ? " expense" : " expenses")));
     figures.push(flowFigure(
       "Went into savings", fmtMoney(flow.saved),
@@ -2102,6 +2119,11 @@ export async function boot() {
       else if (flow.income == null) notes.push("Add your monthly income on Home to see how much of it was left.");
       else if (flow.unspent < 0) notes.push("Spending and savings came to " + fmtMoney(-flow.unspent) + " more than income for these dates, so there is nothing left to show as a slice.");
       else if (flow.unspent > 0) notes.push("\u201cNot spent or saved\u201d is income minus everything logged for these dates. Card purchases count on the day you made them, so it can differ from Left over on Home.");
+    }
+    if (flow.startedOn) {
+      notes.push("You started logging on " + flowDayLabel(flow.startedOn) + ", so earlier dates in this range are left out — including any savings you carried in, which still counts on Savings.");
+    } else if (flow.income != null && flow.incomePeriodsCounted < flow.incomePeriods) {
+      notes.push("Pay periods with nothing logged earn no income here, so the figures only cover the " + flow.incomePeriodsCounted + " you did log.");
     }
     var periodsCovered = flow.income != null && state.income > 0 ? flow.income / state.income : 0;
     if (Math.abs(periodsCovered - Math.round(periodsCovered)) > 0.001) {

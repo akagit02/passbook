@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  NONE, presetRange, incomeForRange, paymentMethodsIn, computeFlow, pieSlices, pieGeometry
+  NONE, presetRange, incomeForRange, trackingStart, paymentMethodsIn, computeFlow, pieSlices, pieGeometry
 } from "../../src/moneyflow/index.js";
 
 const now = new Date(2026, 8, 20); // 20 Sep 2026 — current pay period "2026-09" with payday on the 1st
@@ -44,6 +44,51 @@ describe("money flow ranges", () => {
     expect(incomeForRange(3000, "2026-09-01", "2026-09-16", 1)).toBe(1500); // 15 of 30 days
     expect(incomeForRange(3000, "2026-08-25", "2026-09-25", 25)).toBe(3000);
     expect(incomeForRange(null, "2026-09-01", "2026-10-01", 1)).toBe(null);
+  });
+
+  it("earns no income for pay periods with nothing logged", () => {
+    const txs = [{ date: "2026-08-20" }, { date: "2026-09-07" }];
+    // June and July predate anything logged, so a 3-period range earns two.
+    expect(incomeForRange(3000, "2026-06-01", "2026-09-01", 1, txs)).toBe(3000);
+    expect(incomeForRange(3000, "2026-08-01", "2026-10-01", 1, txs)).toBe(6000);
+    expect(incomeForRange(3000, "2026-06-01", "2026-08-01", 1, txs)).toBe(0);
+    // Pro rata still applies to a part period that does have something in it.
+    expect(incomeForRange(3000, "2026-09-01", "2026-09-16", 1, txs)).toBe(1500);
+  });
+
+  it("skips a pay period with nothing logged inside the tracked dates", () => {
+    const st = fixture();
+    st.transactions.push({ id: "jun", amount: 60, date: "2026-06-05", categoryId: "groceries" });
+    const f = computeFlow(st, Object.assign({}, sep, { start: "2026-06-01", end: "2026-10-01" }), 1);
+    // Tracking starts 5 Jun, so the range covers four periods; July has
+    // nothing logged in it and earns nothing.
+    expect(f).toMatchObject({ incomePeriods: 4, incomePeriodsCounted: 3 });
+    expect(f.income).toBe(incomeForRange(3000, "2026-06-05", "2026-07-01", 1) + 6000);
+  });
+
+  it("dates tracking from the first expense, ignoring savings carried in", () => {
+    const st = fixture();
+    expect(trackingStart(st.transactions)).toBe("2026-08-20");
+    st.transactions.push({ id: "carry", amount: 5000, date: "2026-02-10", categoryId: "savings" });
+    expect(trackingStart(st.transactions)).toBe("2026-08-20");
+    expect(trackingStart([{ date: "2026-02-10", categoryId: "savings" }])).toBe(null);
+  });
+
+  it("leaves out dates before tracking began, income and carried-in savings alike", () => {
+    const st = fixture();
+    st.transactions.push({ id: "carry", amount: 5000, date: "2026-02-10", categoryId: "savings" });
+    const f = computeFlow(st, Object.assign({}, sep, { start: "2026-02-01", end: "2026-10-01" }), 1);
+    // Range starts 1 Feb but logging began 20 Aug: two pay periods, not eight,
+    // and the 5000 carried into savings stays out of the savings figure.
+    expect(f).toMatchObject({ start: "2026-08-20", startedOn: "2026-08-20", saved: 250 });
+    expect(f.incomePeriods).toBe(2);
+    expect(f.income).toBe(incomeForRange(3000, "2026-08-20", "2026-10-01", 1));
+  });
+
+  it("counts a whole range once it is all inside the tracked dates", () => {
+    const f = flow();
+    expect(f.startedOn).toBe(null);
+    expect(f.income).toBe(3000);
   });
 
   it("lists built-in payment methods first, then anything else typed in", () => {
