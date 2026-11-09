@@ -116,6 +116,34 @@ test.describe("ledger", () => {
     await expect(page.locator("#ledger-count")).toHaveText("9 entries");
     await waitForSync(page); // let the delete actually reach Supabase before the page closes
   });
+
+  test("spent this period turns red and explains itself once it outruns income", async ({ page }) => {
+    const tiles = page.locator("#stats .stat-tile");
+    const spentValue = tiles.nth(1).locator(".stat-value");
+    await expect(spentValue).toHaveClass(/positive/);
+
+    // Seeded: spent 297.79 + put aside 200 = 497.79 committed, well under the
+    // 3000 income. Adding 2602.21 of cash spend brings spent to 2900.00, so
+    // committed (2900.00 + 200 = 3100.00) is 100.00 over income — the exact
+    // scenario of spending more than income once savings are counted in too.
+    await page.selectOption("#f-category", "other");
+    await page.fill("#f-amount", "2602.21");
+    await page.fill("#f-note", "E2E overspend trigger");
+    await page.click("#add-form button[type=submit]");
+
+    await expect(tiles.nth(1)).toContainText(gbp(2900));
+    await expect(spentValue).toHaveClass(/negative/);
+    await expect(tiles.nth(1)).toContainText(gbp(200) + " went into savings");
+    await expect(tiles.nth(1)).toContainText(gbp(100) + " more than this period's income");
+
+    const row = page.locator(".ledger-row", { hasText: "E2E overspend trigger" });
+    const del = row.locator(".ledger-del");
+    await del.click();
+    await del.click();
+    await expect(page.locator(".ledger-row", { hasText: "E2E overspend trigger" })).toHaveCount(0);
+    await expect(spentValue).toHaveClass(/positive/);
+    await waitForSync(page);
+  });
 });
 
 test.describe("breakdown", () => {

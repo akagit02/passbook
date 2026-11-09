@@ -220,12 +220,27 @@ export async function boot() {
     var rateClass = rate == null ? "" : rate > 0 ? "positive" : "";
     var putAsideCount = txs.length - spendTxs.length;
 
+    // Spending plus what you put aside is everything you committed this
+    // period, logged the day it happened — unlike Left over, it doesn't wait
+    // for a card statement's due date. So this can go over income on its own,
+    // days or weeks before that spending actually shows up as a card bill —
+    // which is exactly the gap worth flagging here.
+    var committed = spent + fin.putAside;
+    var overBy = income == null ? null : committed - income;
+    var spentClass = overBy == null ? "" : overBy > 0.005 ? "negative" : "positive";
+    var spentSub = spendTxs.length + (spendTxs.length === 1 ? " expense" : " expenses");
+    if (fin.putAside > 0) spentSub += " · " + fmtMoney(fin.putAside) + " went into savings";
+    var spentWarn = overBy != null && overBy > 0.005
+      ? '<div class="stat-warn">' + fmtMoney(overBy) + " more than this period's income — likely on a credit card</div>"
+      : "";
+
     el.innerHTML =
       '<div class="stat-tile editable" id="income-tile">' + incomeTileInner + "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Spent this period</div>' +
-      '<div class="stat-value">' + fmtMoney(spent) + "</div>" +
-      '<div class="stat-sub">' + spendTxs.length + (spendTxs.length === 1 ? " expense" : " expenses") + "</div>" +
+      '<div class="stat-value ' + spentClass + '">' + fmtMoney(spent) + "</div>" +
+      '<div class="stat-sub">' + spentSub + "</div>" +
+      spentWarn +
       "</div>" +
       '<div class="stat-tile">' +
       '<div class="stat-label">Put aside</div>' +
