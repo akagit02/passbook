@@ -1646,6 +1646,90 @@ export async function boot() {
     debtLoad: "% of income on debt repayments",
     fixedCommitments: "% of income on direct debits"
   };
+  // What each vital sign means and how it's arrived at, shown behind the ⓘ on
+  // every row. Kept next to the titles rather than in the domain module: it
+  // describes the maths for a reader, and the domain module stays free of copy.
+  // If the formulas in src/health/index.js change, these change with them.
+  var HEALTH_EXPLAIN = {
+    savingsRate: {
+      what: "How much of your income you're managing to save, instead of spend.",
+      calc: "Your average savings per pay period, as a % of your monthly income.",
+      notes: [
+        "Savings = any money you've logged going into savings, ISAs or investments.",
+        "Income is the monthly figure you set on Home.",
+        "Only periods you've actually logged count — nothing before your first entry is included."
+      ]
+    },
+    bufferMonths: {
+      what: "If your income stopped today, how many months you could cover your essential bills using savings you could get to quickly.",
+      calc: "Your easy-access savings, divided by what you typically spend on essentials each month.",
+      notes: [
+        "Only savings you could actually withdraw quickly count — not things like stocks, which could have lost value right when you need the money.",
+        "\"Typical essentials\" is based on your usual spend over the last 6 months, so one unusually expensive month doesn't skew it."
+      ]
+    },
+    withinMeans: {
+      what: "How often you end a pay period having spent less than you earned.",
+      calc: "The number of periods you stayed under budget, out of the periods shown.",
+      notes: [
+        "What's left = your income, minus cash spent, minus savings, minus any card bills due in that period.",
+        "Card purchases count when the bill is due, not when you buy — that's when the money actually leaves your account."
+      ]
+    },
+    debtLoad: {
+      what: "How much of your income each month is already spoken for by debt repayments.",
+      calc: "Your monthly debt repayments, as a % of your income.",
+      notes: [
+        "Counts ongoing repayment plans that still have a balance left.",
+        "Debts your employer already deducts from your pay aren't counted here, since your income figure is already after that deduction — but they still count towards how much is left to pay and when it'll be paid off.",
+        "The payoff date is a rough estimate, based on your last 3 payments."
+      ]
+    },
+    cardDiscipline: {
+      what: "Whether you're paying off your credit card bills on time.",
+      calc: "Not a %. Shows red if any bill is overdue, amber if one was paid late, green if everything's on time.",
+      notes: [
+        "An overdue bill always shows as red, no matter which time period you're looking at — it's costing you money right now.",
+        "This is the only measure here you can't adjust the targets for."
+      ]
+    },
+    fixedCommitments: {
+      what: "How much of your income is already tied up in regular bills and subscriptions before you spend anything else.",
+      calc: "Your regular monthly bills, as a % of your income.",
+      notes: [
+        "Includes direct debits and subscriptions that have already started.",
+        "For things you're paying off in instalments, only what's still left to pay counts — not the full original amount."
+      ]
+    }
+  };
+
+  function healthInfoHtml(key) {
+    var x = HEALTH_EXPLAIN[key];
+    if (!x) return "";
+    var title = HEALTH_TITLES[key];
+    return (
+      '<span class="health-info">' +
+      '<button type="button" class="health-info-btn" aria-expanded="false"' +
+      ' aria-label="' + esc("What " + title + " means and how it's worked out") + '">i</button>' +
+      '<span class="health-info-pop" role="note">' +
+      '<span class="health-info-head">' + esc(title) + "</span>" +
+      '<span class="health-info-what">' + esc(x.what) + "</span>" +
+      '<span class="health-info-calc"><strong>How it’s worked out:</strong> ' + esc(x.calc) + "</span>" +
+      '<span class="health-info-notes">' +
+      x.notes.map(function (n) { return '<span class="health-info-note">' + esc(n) + "</span>"; }).join("") +
+      "</span></span></span>"
+    );
+  }
+
+  function closeHealthInfo(except) {
+    document.querySelectorAll("#health-rows .health-info.open").forEach(function (el) {
+      if (el === except) return;
+      el.classList.remove("open");
+      var btn = el.querySelector(".health-info-btn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
   // Colour is never the only signal — every dot has a word next to it.
   var HEALTH_STATE_LABELS = { green: "Good", amber: "Watch", red: "Act now", neutral: "No data" };
   var HEALTH_VERDICTS = {
@@ -1819,7 +1903,9 @@ export async function boot() {
         '<div class="health-row health-' + r.status + '" data-metric="' + r.key + '">' +
         '<span class="health-dot" aria-hidden="true"></span>' +
         '<div class="health-main">' +
-        '<div class="health-top"><span class="health-title">' + esc(HEALTH_TITLES[r.key]) + "</span>" +
+        '<div class="health-top">' +
+        '<span class="health-title-wrap"><span class="health-title">' + esc(HEALTH_TITLES[r.key]) + "</span>" +
+        healthInfoHtml(r.key) + "</span>" +
         '<span class="health-figure">' + esc(p.figure) + '<span class="health-state">' + HEALTH_STATE_LABELS[r.status] + "</span></span></div>" +
         '<div class="health-sub">' + esc(p.sub) + "</div>" +
         (p.hint ? '<div class="health-hint"><strong>To reach green:</strong> ' + esc(p.hint) + "</div>" : "") +
@@ -1934,6 +2020,32 @@ export async function boot() {
         healthTab = btn.dataset.tab;
         renderHealthView();
       });
+    });
+
+    // Hover and keyboard focus open the ⓘ explanations through CSS alone.
+    // Click is wired here as well so they work on a touchscreen, where there
+    // is no hover — delegated, because the rows are re-rendered on every
+    // window change.
+    document.getElementById("health-rows").addEventListener("click", function (e) {
+      var btn = e.target.closest(".health-info-btn");
+      if (!btn) { closeHealthInfo(null); return; }
+      var wrap = btn.closest(".health-info");
+      var open = !wrap.classList.contains("open");
+      closeHealthInfo(wrap);
+      wrap.classList.toggle("open", open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest(".health-info")) closeHealthInfo(null);
+    });
+    // Escape also takes focus off the ⓘ: keyboard focus is one of the things
+    // that holds an explanation open, so leaving focus on the button would
+    // mean Escape appeared to do nothing.
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      closeHealthInfo(null);
+      var active = document.activeElement;
+      if (active && active.classList && active.classList.contains("health-info-btn")) active.blur();
     });
   }
 

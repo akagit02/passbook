@@ -24,6 +24,55 @@ test.describe("financial health — where money goes", () => {
     await expect(page.locator("#health-rows .health-row")).toHaveCount(6);
   });
 
+  test("every vital sign explains itself behind an info indicator", async ({ page }) => {
+    const rows = page.locator("#health-rows .health-row");
+    await expect(rows).toHaveCount(6);
+    await expect(page.locator("#health-rows .health-info-btn")).toHaveCount(6);
+
+    const savings = rows.filter({ hasText: "Savings rate" }).first();
+    const btn = savings.locator(".health-info-btn");
+    const pop = savings.locator(".health-info-pop");
+
+    // Closed until asked for, and the button says so for a screen reader.
+    await expect(pop).toBeHidden();
+    await expect(btn).toHaveAttribute("aria-expanded", "false");
+    await expect(btn).toHaveAttribute("aria-label", /Savings rate/);
+
+    // Hover is the primary way in.
+    await btn.hover();
+    await expect(pop).toBeVisible();
+    await expect(pop).toContainText("How it’s worked out:");
+    await expect(pop).toContainText("as a % of your monthly income");
+    await expect(pop).toContainText("savings, ISAs or investments");
+
+    // Clicking keeps it open (the touchscreen path, where there is no hover),
+    // and moving the pointer away no longer closes it.
+    await btn.click();
+    await expect(btn).toHaveAttribute("aria-expanded", "true");
+    await page.locator("#health-range-label").hover();
+    await expect(pop).toBeVisible();
+
+    // Only one at a time: opening another closes this one.
+    const buffer = rows.filter({ hasText: "Emergency buffer" }).first();
+    await buffer.locator(".health-info-btn").click();
+    await expect(buffer.locator(".health-info-pop")).toBeVisible();
+    await expect(buffer.locator(".health-info-pop")).toContainText("last 6 months");
+    await expect(btn).toHaveAttribute("aria-expanded", "false");
+
+    // Escape unpins it. The pointer has to move off the ⓘ first, or hover
+    // alone would still be holding it open — which is correct behaviour.
+    await page.locator("#health-range-label").hover();
+    await page.keyboard.press("Escape");
+    await expect(buffer.locator(".health-info-pop")).toBeHidden();
+
+    // Survives a re-render of the rows.
+    await page.click("#health-panel-check .health-win-btn[data-win='3']");
+    await expect(page.locator("#health-rows .health-info-btn")).toHaveCount(6);
+    await rows.filter({ hasText: "Card discipline" }).first().locator(".health-info-btn").click();
+    await expect(rows.filter({ hasText: "Card discipline" }).first().locator(".health-info-pop"))
+      .toContainText("can't adjust the targets");
+  });
+
   test("drills from income down to a category and the card that paid", async ({ page }) => {
     await page.click("#health-tab-flow");
     await expect(page.locator("#flow-range-label")).toContainText("1 Sept – 30 Sept 2026");

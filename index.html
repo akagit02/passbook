@@ -835,6 +835,45 @@
   .health-main { min-width: 0; }
   .health-top { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
   .health-title { font-weight: 500; font-size: 0.92rem; }
+  .health-title-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  /* The ⓘ explainer: opens on hover, on keyboard focus, and on tap (a tap
+     adds .open, since a touchscreen has no hover to rely on). */
+  .health-info { position: relative; display: inline-flex; flex: none; }
+  .health-info-btn {
+    width: 16px; height: 16px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); border-radius: 50%;
+    background: var(--paper-sunken); color: var(--ink-soft);
+    font-family: var(--font-mono); font-size: 0.66rem; font-style: italic; line-height: 1;
+    cursor: help;
+  }
+  .health-info-btn:hover, .health-info-btn:focus-visible { border-color: var(--brass); color: var(--brass-deep); }
+  .health-info-pop {
+    display: none;
+    position: absolute; top: calc(100% + 7px); left: -6px; z-index: 40;
+    width: min(330px, calc(100vw - 72px));
+    /* The panel floats over the rows beneath it, so it must never intercept a
+       click — otherwise an open one swallows the tap meant for the next row's
+       own ⓘ. Reading it needs no pointer events anyway: hover is held by the
+       button, not the panel. */
+    pointer-events: none;
+    flex-direction: column; gap: 7px;
+    padding: 11px 13px;
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--paper-raised); box-shadow: var(--shadow);
+    font-size: 0.78rem; font-weight: 400; line-height: 1.5; color: var(--ink-soft);
+    text-align: left; white-space: normal; cursor: auto;
+  }
+  .health-info:hover .health-info-pop,
+  .health-info:focus-within .health-info-pop,
+  .health-info.open .health-info-pop { display: flex; }
+  .health-info-head { font-weight: 600; color: var(--ink); font-size: 0.82rem; }
+  .health-info-what { color: var(--ink); }
+  .health-info-calc { padding: 7px 9px; border-radius: var(--radius-sm); background: var(--paper-sunken); }
+  .health-info-calc strong { font-weight: 600; color: var(--ink); }
+  .health-info-notes { display: flex; flex-direction: column; gap: 5px; }
+  .health-info-note { display: block; padding-left: 11px; position: relative; }
+  .health-info-note::before { content: "·"; position: absolute; left: 3px; color: var(--ink-faint); }
   .health-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
   .health-state {
     font-family: var(--font-body);
